@@ -1,14 +1,18 @@
 //! Type definitions of all the components of an Ink story.
 
+mod list;
 mod object;
 mod path;
 mod pointer;
 mod push_pop_type;
+mod value;
 
+pub use list::{ListEntry, List, ListDefinition};
 pub use object::Object;
 pub use path::Path;
 pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
+pub use value::Value;
 
 mod choice;
 mod choice_point;
