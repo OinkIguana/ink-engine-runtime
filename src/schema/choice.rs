@@ -5,5 +5,5 @@ pub struct Choice {
     text: String,
     source_path: Path,
     target_path: Path,
-    is_invisible_default: bool,
+    pub(crate) is_invisible_default: bool,
 }

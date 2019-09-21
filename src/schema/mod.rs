@@ -1,5 +1,9 @@
 //! Type definitions of all the components of an Ink story.
 
+pub trait TryAsRef<T> where T: ?Sized {
+    fn try_as_ref(&self) -> Option<&T>;
+}
+
 mod list;
 mod object;
 mod path;
@@ -15,7 +19,7 @@ pub use path::Path;
 pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
 pub use value::Value;
-pub use external_function::{ExternalFunction, TryAsRef};
+pub use external_function::ExternalFunction;
 
 mod choice;
 mod choice_point;

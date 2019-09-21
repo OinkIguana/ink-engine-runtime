@@ -1,4 +1,4 @@
-use super::{Container, Path};
+use super::Path;
 
 #[derive(Clone, Debug)]
 pub struct ChoicePoint {
@@ -8,8 +8,4 @@ pub struct ChoicePoint {
     has_choice_only_content: bool,
     once_only: bool,
     is_invisible_default: bool,
-}
-
-impl ChoicePoint {
-    fn choice_target(&self) -> Container { unimplemented!() }
 }

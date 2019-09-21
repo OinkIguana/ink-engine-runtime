@@ -2,11 +2,6 @@ use inventory::collect;
 
 use super::Value;
 
-pub trait TryAsRef<T> where T: ?Sized {
-    type Error;
-    fn try_as_ref(&self) -> Result<&T, Self::Error>;
-}
-
 pub struct ExternalFunction {
     pub name: &'static str,
     pub handler: fn(&[Value]) -> Value,
@@ -22,7 +17,7 @@ macro_rules! ink_external {
                 if params.len() == 0 {
                     panic!("Too few arguments passed to EXTERNAL Ink function $name");
                 }
-                let $param: &$type = params[0].try_as_ref().expect(&format!("Invalid passed to EXTERNAL Ink function $name: Expected $type, received {:?}", params[0]));
+                let $param: &$type = crate::schema::TryAsRef::try_as_ref(&params[0]).expect(&format!("Invalid passed to EXTERNAL Ink function $name: Expected $type, received {:?}", params[0]));
                 params = &params[1..];
             )*
 

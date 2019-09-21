@@ -32,35 +32,29 @@ impl From<String> for Value {
 // TODO: settle on some representation for the other types that is good enough to pass out to
 // external functions in the future. For now, these will suffice as a proof of concept.
 
-#[derive(Debug)]
-pub struct ValueConversionError;
-
 impl super::TryAsRef<i64> for Value {
-    type Error = ValueConversionError;
-    fn try_as_ref(&self) -> Result<&i64, Self::Error> {
+    fn try_as_ref(&self) -> Option<&i64> {
         match self {
-            Value::Int(ref value) => Ok(value),
-            _ => Err(ValueConversionError),
+            Value::Int(ref value) => Some(value),
+            _ => None,
         }
     }
 }
 
 impl super::TryAsRef<f64> for Value {
-    type Error = ValueConversionError;
-    fn try_as_ref(&self) -> Result<&f64, Self::Error> {
+    fn try_as_ref(&self) -> Option<&f64> {
         match self {
-            Value::Float(ref value) => Ok(value),
-            _ => Err(ValueConversionError),
+            Value::Float(ref value) => Some(value),
+            _ => None,
         }
     }
 }
 
 impl super::TryAsRef<String> for Value {
-    type Error = ValueConversionError;
-    fn try_as_ref(&self) -> Result<&String, Self::Error> {
+    fn try_as_ref(&self) -> Option<&String> {
         match self {
-            Value::String(ref value) => Ok(value),
-            _ => Err(ValueConversionError),
+            Value::String(ref value) => Some(value),
+            _ => None,
         }
     }
 }

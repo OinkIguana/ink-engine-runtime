@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use super::*;
 
@@ -46,6 +47,10 @@ pub struct Story {
     has_validated_externals: bool,
 
     // StoryState stuff
+    output_stream: Vec<Object>,
+    current_text: RefCell<Option<String>>,
+    current_tags: RefCell<Option<Vec<String>>>,
+
     current_errors: Vec<String>,
     current_warnings: Vec<String>,
     evaluation_stack: Vec<Object>,
@@ -56,11 +61,8 @@ pub struct Story {
     previous_random: usize,
     did_safe_exit: bool,
 
-    visit_counts: HashMap<String, usize>,
-    turn_indices: HashMap<String, usize>,
-    output_stream: Vec<Object>,
-    output_stream_text_dirty: bool,
-    output_stream_tags_dirty: bool,
+    visit_counts: HashMap<Path, usize>,
+    turn_indices: HashMap<Path, usize>,
     current_choices: Vec<Rc<Choice>>,
 
     // VariablesState stuff
@@ -81,16 +83,89 @@ impl Story {
     pub const INK_VERSION_MINIMUM_COMPATIBLE: u32 = 18;
 }
 
+// Error accessors
+impl Story {
+    pub fn has_error(&self) -> bool {
+        !self.current_errors.is_empty()
+    }
+
+    pub fn has_warning(&self) -> bool {
+        !self.current_warnings.is_empty()
+    }
+
+    pub fn current_errors(&self) -> &[String] {
+        &self.current_errors
+    }
+
+    pub fn current_warnings(&self) -> &[String] {
+        &self.current_warnings
+    }
+}
+
+// Story progression
 impl Story {
     pub fn current_choices(&self) -> Vec<Rc<Choice>> {
-        unimplemented!();
+        // current choices does not include the invisible default choice
+        self.current_choices
+            .iter()
+            .filter(|choice| !choice.is_invisible_default)
+            .cloned()
+            .collect()
     }
 
-    pub fn current_text(&self) -> String {
-        unimplemented!();
+    pub fn current_text(&mut self) -> String {
+        if let Some(ref text) = *self.current_text.borrow() {
+            return text.clone();
+        }
+
+        let text = self.output_stream
+            .iter()
+            .filter_map(TryAsRef::<String>::try_as_ref)
+            .map(|string| string.as_str())
+            .collect::<String>();
+        *self.current_text.borrow_mut() = Some(text.clone());
+        text
     }
 
-    pub fn current_tags(&self) -> Vec<Rc<Tag>> {
-        unimplemented!();
+    pub fn current_tags(&self) -> Vec<String> {
+        if let Some(ref tags) = *self.current_tags.borrow() {
+            return tags.clone();
+        }
+
+        let tags = self.output_stream
+            .iter()
+            .filter_map(TryAsRef::<Rc<Tag>>::try_as_ref)
+            .map(|tag| tag.text().to_owned())
+            .collect::<Vec<_>>();
+        *self.current_tags.borrow_mut() = Some(tags.clone());
+        tags
+    }
+
+    pub fn step(&mut self) {
+        let pointer = self.current_pointer();
+        if pointer.is_null() { return; }
+
+        while let Some(container) = pointer.resolve().and_then(|obj| TryAsRef::<Rc<Container>>::try_as_ref(&obj).cloned()) {
+            self.visit_container(&container, true);
+        }
+    }
+
+    fn current_pointer(&self) -> Rc<Pointer> {
+        self.threads.last().unwrap().elements.last().unwrap().current_pointer.clone()
+    }
+
+    pub fn can_continue(&self) -> bool {
+        !self.current_pointer().is_null() && !self.has_error()
+    }
+}
+
+// Story helpers
+impl Story {
+    fn visit_container(&mut self, container: &Rc<Container>, at_start: bool) {
+        if !container.as_ref().counting_at_start_only || at_start {
+            if container.as_ref().visits_should_be_counted {
+                *self.visit_counts.entry(Object::Container(container.clone()).path()).or_default() += 1;
+            }
+        }
     }
 }
