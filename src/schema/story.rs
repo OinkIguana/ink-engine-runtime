@@ -22,6 +22,16 @@ pub struct Thread {
     previous_pointer: Rc<Pointer>,
 }
 
+/// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
+/// and `CallStack` all merged together. This had to be done because the 3 components used to use
+/// shared references to the parent/each other, but we cannot easily share ownership/self reference
+/// in Rust.
+///
+/// Also note that all stuff related to patching (`StatePatch`) and asynchronous *anything* has been
+/// removed, as they are not relevant additions in a Rust implementation. The saving will not be 
+/// handled internally (`Story` will implement `Serialize`/`Deserialize`), so a simple `story.clone()` will
+/// be enough to take a snapshot and save it in the background on another thread while the game 
+/// still plays. Asynchronous features are just out of scope for this project.
 #[derive(Clone, Debug)]
 pub struct Story {
     // Story stuff
@@ -30,7 +40,7 @@ pub struct Story {
     main_container: Rc<Container>,
     list_definitions: HashMap<String, ListDefinition>,
     // TODO: don't require these to be `fn`, and allow `Box<dyn FnMut>` or something instead.
-    externals: HashMap<String, fn(HashMap<String, Value>) -> Value>,
+    //       requires implementing Debug manually
     variable_observers: HashMap<String, Vec<fn(String, Value)>>,
 
     has_validated_externals: bool,
@@ -45,6 +55,13 @@ pub struct Story {
     story_seed: usize,
     previous_random: usize,
     did_safe_exit: bool,
+
+    visit_counts: HashMap<String, usize>,
+    turn_indices: HashMap<String, usize>,
+    output_stream: Vec<Object>,
+    output_stream_text_dirty: bool,
+    output_stream_tags_dirty: bool,
+    current_choices: Vec<Rc<Choice>>,
 
     // VariablesState stuff
     global_variables: HashMap<String, Object>,
@@ -65,11 +82,15 @@ impl Story {
 }
 
 impl Story {
-    pub fn current_choices() -> Vec<Rc<Choice>> {
+    pub fn current_choices(&self) -> Vec<Rc<Choice>> {
         unimplemented!();
     }
 
-    pub fn current_tags() -> Vec<Rc<Tag>> {
+    pub fn current_text(&self) -> String {
+        unimplemented!();
+    }
+
+    pub fn current_tags(&self) -> Vec<Rc<Tag>> {
         unimplemented!();
     }
 }

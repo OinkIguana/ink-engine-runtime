@@ -6,6 +6,8 @@ mod path;
 mod pointer;
 mod push_pop_type;
 mod value;
+#[macro_use]
+mod external_function;
 
 pub use list::{ListEntry, List, ListDefinition};
 pub use object::Object;
@@ -13,6 +15,7 @@ pub use path::Path;
 pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
 pub use value::Value;
+pub use external_function::{ExternalFunction, TryAsRef};
 
 mod choice;
 mod choice_point;
