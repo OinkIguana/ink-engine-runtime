@@ -50,20 +50,20 @@ pub struct Story {
     output_stream: Vec<Object>,
     current_text: RefCell<Option<String>>,
     current_tags: RefCell<Option<Vec<String>>>,
+    current_choices: Vec<Rc<Choice>>,
 
     current_errors: Vec<String>,
     current_warnings: Vec<String>,
     evaluation_stack: Vec<Object>,
     diverted_pointer: Rc<Pointer>,
 
-    current_turn_index: usize,
     story_seed: usize,
     previous_random: usize,
     did_safe_exit: bool,
 
+    current_turn_index: usize,
     visit_counts: HashMap<Path, usize>,
     turn_indices: HashMap<Path, usize>,
-    current_choices: Vec<Rc<Choice>>,
 
     // VariablesState stuff
     global_variables: HashMap<String, Object>,
@@ -162,9 +162,12 @@ impl Story {
 // Story helpers
 impl Story {
     fn visit_container(&mut self, container: &Rc<Container>, at_start: bool) {
-        if !container.as_ref().counting_at_start_only || at_start {
-            if container.as_ref().visits_should_be_counted {
+        if !container.counting_at_start_only || at_start {
+            if container.visits_should_be_counted {
                 *self.visit_counts.entry(Object::Container(container.clone()).path()).or_default() += 1;
+            }
+            if container.turn_index_should_be_counted {
+                self.turn_indices.insert(Object::Container(container.clone()).path(), self.current_turn_index);
             }
         }
     }
