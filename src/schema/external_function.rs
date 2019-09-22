@@ -11,13 +11,13 @@ collect!(ExternalFunction);
 
 #[macro_export]
 macro_rules! ink_external {
-    { fn $name:ident($($param:ident : &$type:ty),*$(,)?) -> $ret:ty $body:block } => {
+    { fn $name:ident($($param:ident : $type:ty),*$(,)?) -> $ret:ty $body:block } => {
         fn $name(mut params: &[crate::schema::Value]) -> crate::schema::Value {
             $(
                 if params.len() == 0 {
                     panic!("Too few arguments passed to EXTERNAL Ink function $name");
                 }
-                let $param: &$type = crate::schema::TryAsRef::try_as_ref(&params[0]).expect(&format!("Invalid passed to EXTERNAL Ink function $name: Expected $type, received {:?}", params[0]));
+                let $param: $type = std::convert::TryInto::try_into(&params[0]).expect(&format!("Invalid value passed to EXTERNAL Ink function $name: Expected $type, received {:?}", params[0]));
                 params = &params[1..];
             )*
 

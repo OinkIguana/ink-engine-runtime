@@ -1,32 +1,22 @@
-use super::{Path, Pointer, PushPopType};
+use super::{Path, PushPopType};
 
 #[derive(Clone, Debug)]
-pub enum Divert {
-    Path { 
-        target_path: Path,
-        target_pointer: Pointer,
-        pushes_to_stack: bool,
-        stack_push_type: PushPopType,
-        is_external: bool,
-        external_args: i32,
-        is_conditional: bool,
-    },
-    Variable {
-        variable_divert_name: String,
-        pushes_to_stack: bool,
-        stack_push_type: PushPopType,
-        is_external: bool,
-        external_args: i32,
-        is_conditional: bool,
-    }
+pub struct Divert {
+    pub(crate) target: DivertTarget,
+    pub(crate) pushes_to_stack: bool,
+    pub(crate) stack_push_type: PushPopType,
+    pub(crate) is_conditional: bool,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug)]
+pub enum DivertTarget {
+    Path(Path),
+    Variable(String),
+    External { path: String, args: i32 },
 }
 
 impl std::cmp::PartialEq for Divert {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Divert::Path { target_path: a, .. }, Divert::Path { target_path: b, .. }) => a == b,
-            (Divert::Variable { variable_divert_name: a, .. }, Divert::Variable { variable_divert_name: b, .. }) => a == b,
-            _ => false,
-        }
+        self.target.eq(&other.target)
     }
 }

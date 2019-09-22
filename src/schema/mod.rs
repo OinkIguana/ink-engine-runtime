@@ -15,7 +15,8 @@ mod external_function;
 
 pub use list::{ListEntry, List, ListDefinition};
 pub use object::Object;
-pub use path::Path;
+pub(crate) use object::NamedObject;
+pub use path::{Path, Component};
 pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
 pub use value::Value;
@@ -37,7 +38,7 @@ pub use choice::Choice;
 pub use choice_point::ChoicePoint;
 pub use container::Container;
 pub use control_command::ControlCommand;
-pub use divert::Divert;
+pub use divert::{Divert, DivertTarget};
 pub use glue::Glue;
 pub use native_function_call::NativeFunctionCall;
 pub use story::Story;

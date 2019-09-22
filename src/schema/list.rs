@@ -14,3 +14,7 @@ pub struct ListDefinition {
 pub struct List {
     items: Vec<ListEntry>,
 }
+
+impl List {
+    pub fn is_empty(&self) -> bool { self.items.is_empty() }
+}

@@ -6,7 +6,7 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub struct Element {
-    current_pointer: Rc<Pointer>,
+    current_pointer: Pointer,
 
     is_expression_evaluation: bool,
     temporary_variables: HashMap<String, Rc<Object>>,
@@ -20,7 +20,7 @@ pub struct Element {
 pub struct Thread {
     elements: Vec<Element>,
     index: usize,
-    previous_pointer: Rc<Pointer>,
+    previous_pointer: Pointer,
 }
 
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
@@ -42,20 +42,21 @@ pub struct Story {
     list_definitions: HashMap<String, ListDefinition>,
     // TODO: don't require these to be `fn`, and allow `Box<dyn FnMut>` or something instead.
     //       requires implementing Debug manually
+    //       maybe these can be an `Inventory` thing too? probably not
     variable_observers: HashMap<String, Vec<fn(String, Value)>>,
 
     has_validated_externals: bool,
 
     // StoryState stuff
+    current_errors: Vec<String>,
+    current_warnings: Vec<String>,
+
     output_stream: Vec<Object>,
     current_text: RefCell<Option<String>>,
     current_tags: RefCell<Option<Vec<String>>>,
     current_choices: Vec<Rc<Choice>>,
 
-    current_errors: Vec<String>,
-    current_warnings: Vec<String>,
-    evaluation_stack: Vec<Object>,
-    diverted_pointer: Rc<Pointer>,
+    diverted_pointer: Option<Pointer>,
 
     story_seed: usize,
     previous_random: usize,
@@ -68,11 +69,13 @@ pub struct Story {
     // VariablesState stuff
     global_variables: HashMap<String, Object>,
     default_global_variables: HashMap<String, Object>,
+    // TODO: investigate whether `evaluation_stack` has to be `Vec<Object>` or if it can be `Vec<Value>`
+    evaluation_stack: Vec<Object>,
 
     // CallStack stuff
     threads: Vec<Thread>,
     thread_counter: usize,
-    start_of_root: Rc<Pointer>,
+    start_of_root: Pointer,
 }
 
 impl Story {
@@ -102,7 +105,7 @@ impl Story {
     }
 }
 
-// Story progression
+// Accessors
 impl Story {
     pub fn current_choices(&self) -> Vec<Rc<Choice>> {
         // current choices does not include the invisible default choice
@@ -141,21 +144,70 @@ impl Story {
         tags
     }
 
-    pub fn step(&mut self) {
-        let pointer = self.current_pointer();
+    pub fn can_continue(&self) -> bool {
+        !self.current_pointer().is_null() && !self.has_error()
+    }
+}
+
+// Story progression
+impl Story {
+    fn step(&mut self) {
+        let mut pointer = self.current_pointer();
         if pointer.is_null() { return; }
 
         while let Some(container) = pointer.resolve().and_then(|obj| TryAsRef::<Rc<Container>>::try_as_ref(&obj).cloned()) {
             self.visit_container(&container, true);
+            if container.is_empty() {
+                break;
+            }
+
+            pointer = Pointer::to_start_of_container(&container);
         }
+
+        let current_obj = pointer.resolve();
+        self.set_current_pointer(pointer);
+
+        let is_logic_or_flow_control = self.perform_logic_and_flow_control(current_obj);
     }
 
-    fn current_pointer(&self) -> Rc<Pointer> {
-        self.threads.last().unwrap().elements.last().unwrap().current_pointer.clone()
-    }
+    /// Performs logic and flow control... returning true if the flow should be cancelled
+    fn perform_logic_and_flow_control(&mut self, current_obj: Option<Object>) -> bool {
+        let current_obj = match current_obj {
+            Some(obj) => obj,
+            None => return false,
+        };
 
-    pub fn can_continue(&self) -> bool {
-        !self.current_pointer().is_null() && !self.has_error()
+        match current_obj {
+            Object::Divert(divert) => {
+                if divert.is_conditional {
+                    let val = self.evaluation_stack.pop().expect("No values on evaluation stack to pop when checking Divert condition");
+                    // if the condition is false, return true to cancel the divert
+                    if !val.is_truthy() {
+                        return true;
+                    }
+                }
+
+                match &divert.target {
+                    DivertTarget::Variable(variable) => {
+                        unimplemented!("TODO");
+                    },
+                    DivertTarget::External { path, args } => {},
+                    DivertTarget::Path(path) => self.diverted_pointer = self.pointer_to_path(path, None),
+                }
+
+                if divert.pushes_to_stack {
+                    // TODO: push to stack
+                }
+
+                if self.diverted_pointer.is_none() {}
+            },
+            Object::ControlCommand(command) => {},
+            Object::VariableAssignment(assignment) => {},
+            Object::VariableReference(reference) => {},
+            Object::NativeFunctionCall(call) => {},
+            _ => return false,
+        }
+        return true
     }
 }
 
@@ -170,5 +222,32 @@ impl Story {
                 self.turn_indices.insert(Object::Container(container.clone()).path(), self.current_turn_index);
             }
         }
+    }
+
+    fn current_element(&self) -> &Element {
+        self.threads.last().unwrap().elements.last().unwrap()
+    }
+
+    fn current_element_mut(&mut self) -> &mut Element {
+        self.threads.last_mut().unwrap().elements.last_mut().unwrap()
+    }
+
+    fn current_pointer(&self) -> Pointer {
+        self.current_element().current_pointer.clone()
+    }
+
+    fn set_current_pointer(&mut self, pointer: Pointer) {
+        self.current_element_mut().current_pointer = pointer;
+    }
+
+    fn pointer_to_path(&self, path: &Path, relative_to: Option<Object>)-> Option<Pointer> {
+        if path.is_empty() { return None }
+        if path.is_relative {
+            match relative_to {
+                Some(object) => return object.resolve_path(path).as_ref().map(Pointer::to),
+                None => panic!("Cannot resolve relative path with no provided root"),
+            }
+        }
+        self.main_container.content_at_path(path).as_ref().map(Pointer::to)
     }
 }
