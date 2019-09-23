@@ -15,6 +15,16 @@ pub enum DivertTarget {
     External { path: String, args: i32 },
 }
 
+impl Divert {
+    pub fn is_external(&self) -> bool {
+        if let DivertTarget::External { .. } = self.target {
+            true
+        } else {
+            false
+        }
+    }
+}
+
 impl std::cmp::PartialEq for Divert {
     fn eq(&self, other: &Self) -> bool {
         self.target.eq(&other.target)

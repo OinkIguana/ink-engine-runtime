@@ -16,5 +16,9 @@ pub struct List {
 }
 
 impl List {
+    pub fn of_single_value(value: ListEntry) -> Self {
+        Self { items: vec![value] }
+    }
+
     pub fn is_empty(&self) -> bool { self.items.is_empty() }
 }

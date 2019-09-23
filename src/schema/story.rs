@@ -8,7 +8,7 @@ use super::*;
 pub struct Element {
     current_pointer: Pointer,
 
-    is_expression_evaluation: bool,
+    in_expression_evaluation: bool,
     temporary_variables: HashMap<String, Rc<Object>>,
     push_pop_type: PushPopType,
 
@@ -21,6 +21,12 @@ pub struct Thread {
     elements: Vec<Element>,
     index: usize,
     previous_pointer: Pointer,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum VariableContext {
+    Global,
+    Thread(usize),
 }
 
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
@@ -67,9 +73,9 @@ pub struct Story {
     turn_indices: HashMap<Path, usize>,
 
     // VariablesState stuff
+    // TODO: investigate whether `evaluation_stack` and variables hold `Object` or only `Value`
     global_variables: HashMap<String, Object>,
     default_global_variables: HashMap<String, Object>,
-    // TODO: investigate whether `evaluation_stack` has to be `Vec<Object>` or if it can be `Vec<Value>`
     evaluation_stack: Vec<Object>,
 
     // CallStack stuff
@@ -189,17 +195,37 @@ impl Story {
 
                 match &divert.target {
                     DivertTarget::Variable(variable) => {
-                        unimplemented!("TODO");
+                        let value = self.get_variable_value(variable)
+                            .expect(&format!("Attempted to divert to a variable target, but no variable was found named {}", variable));
+                        
+                        match value {
+                            Value::DivertTarget(path) => self.diverted_pointer = self.pointer_to_path(path, None),
+                            _ => panic!("Attempted to divert to a variable target, but variable {} contained a non-divert target value {:?}", variable, value),
+                        }
                     },
                     DivertTarget::External { path, args } => {},
                     DivertTarget::Path(path) => self.diverted_pointer = self.pointer_to_path(path, None),
                 }
 
                 if divert.pushes_to_stack {
-                    // TODO: push to stack
+                    let element = Element {
+                        current_pointer: self.current_pointer(),
+                        in_expression_evaluation: false,
+                        temporary_variables: HashMap::default(),
+                        push_pop_type: divert.stack_push_type,
+                        evaluation_stack_size_when_called: 0,
+                        function_start_in_output_stream: self.output_stream.len(),
+                    };
+                    self.threads
+                        .last_mut()
+                        .unwrap()
+                        .elements
+                        .push(element);
                 }
 
-                if self.diverted_pointer.is_none() {}
+                if self.diverted_pointer.is_none() && !divert.is_external() {
+                    panic!("Attempted to divert to target {:?}, but could not", divert.target);
+                }
             },
             Object::ControlCommand(command) => {},
             Object::VariableAssignment(assignment) => {},
@@ -249,5 +275,42 @@ impl Story {
             }
         }
         self.main_container.content_at_path(path).as_ref().map(Pointer::to)
+    }
+}
+
+// Variables
+impl Story {
+    fn get_variable_value(&self, variable: &String) -> Option<&Value> {
+        self.get_variable_with_context(variable, None);
+    }
+
+    fn get_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<&Value> {
+        let raw_value = self.get_raw_variable_with_context(variable, context)?;
+
+        Some(raw_value)
+    }
+
+    fn get_raw_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {
+        match context {
+            | None
+            | Some(VariableContext::Global) => {
+                let value = self.global_variables.get(variable)
+                    .and_then(TryAsRef::<Rc<Value>>::try_as_ref)
+                    .map(std::ops::Deref::deref);
+                if value.is_some() { return value.cloned(); }
+
+                let default_value = self.default_global_variables.get(variable)
+                    .and_then(TryAsRef::<Rc<Value>>::try_as_ref)
+                    .map(std::ops::Deref::deref);
+                if default_value.is_some() { return default_value.cloned(); }
+
+                let list_item_value = self.find_single_item_list_with_name(variable);
+                if list_item_value.is_some() { return list_item_value; }
+            }
+        }
+    }
+
+    fn find_single_item_list_with_name(&self, variable: &String) -> Option<Value> {
+        
     }
 }
