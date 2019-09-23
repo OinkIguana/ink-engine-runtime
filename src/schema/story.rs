@@ -23,12 +23,6 @@ pub struct Thread {
     previous_pointer: Pointer,
 }
 
-#[derive(Copy, Clone, Debug)]
-enum VariableContext {
-    Global,
-    Temporary(usize),
-}
-
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
 /// and `CallStack` all merged together. This had to be done because the 3 components used to use
 /// shared references to the parent/each other, but we cannot easily share ownership/self reference
@@ -287,7 +281,10 @@ impl Story {
     fn get_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {
         let raw_value = self.get_raw_variable_with_context(variable, context)?;
 
-        Some(raw_value)
+        match &raw_value {
+            Value::VariablePointer(name, context) => self.get_variable_with_context(name, Some(*context)),
+            _ => Some(raw_value),
+        }
     }
 
     fn get_raw_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {

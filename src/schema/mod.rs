@@ -13,6 +13,7 @@ mod value;
 #[macro_use]
 mod external_function;
 mod list_definitions;
+mod variable_context;
 
 pub use list::{ListEntry, List, ListDefinition};
 pub use list_definitions::ListDefinitions;
@@ -23,6 +24,7 @@ pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
 pub use value::Value;
 pub use external_function::ExternalFunction;
+pub use variable_context::VariableContext;
 
 mod choice;
 mod choice_point;

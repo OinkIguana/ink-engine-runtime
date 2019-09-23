@@ -1,4 +1,4 @@
-use super::{List, Path};
+use super::{VariableContext, List, Path};
 
 #[derive(Clone, Debug)]
 pub enum Value {
@@ -8,7 +8,7 @@ pub enum Value {
     String(String),
 
     DivertTarget(Path),
-    VariablePointer(String),
+    VariablePointer(String, VariableContext),
 }
 
 impl Value {
