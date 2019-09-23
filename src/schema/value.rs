@@ -51,6 +51,13 @@ impl From<String> for Value {
     }
 }
 
+
+impl From<List> for Value {
+    fn from(value: List) -> Self {
+        Self::List(value)
+    }
+}
+
 // TODO: settle on some representation for the other types that is good enough to pass out to
 // external functions in the future. For now, these will suffice as a proof of concept.
 

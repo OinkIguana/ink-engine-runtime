@@ -12,8 +12,10 @@ mod push_pop_type;
 mod value;
 #[macro_use]
 mod external_function;
+mod list_definitions;
 
 pub use list::{ListEntry, List, ListDefinition};
+pub use list_definitions::ListDefinitions;
 pub use object::Object;
 pub(crate) use object::NamedObject;
 pub use path::{Path, Component};

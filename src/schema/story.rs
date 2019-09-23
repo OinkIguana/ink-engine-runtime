@@ -9,7 +9,7 @@ pub struct Element {
     current_pointer: Pointer,
 
     in_expression_evaluation: bool,
-    temporary_variables: HashMap<String, Rc<Object>>,
+    temporary_variables: HashMap<String, Object>,
     push_pop_type: PushPopType,
 
     evaluation_stack_size_when_called: usize,
@@ -26,7 +26,7 @@ pub struct Thread {
 #[derive(Copy, Clone, Debug)]
 enum VariableContext {
     Global,
-    Thread(usize),
+    Temporary(usize),
 }
 
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
@@ -35,9 +35,9 @@ enum VariableContext {
 /// in Rust.
 ///
 /// Also note that all stuff related to patching (`StatePatch`) and asynchronous *anything* has been
-/// removed, as they are not relevant additions in a Rust implementation. The saving will not be 
+/// removed, as they are not relevant additions in a Rust implementation. The saving will not be
 /// handled internally (`Story` will implement `Serialize`/`Deserialize`), so a simple `story.clone()` will
-/// be enough to take a snapshot and save it in the background on another thread while the game 
+/// be enough to take a snapshot and save it in the background on another thread while the game
 /// still plays. Asynchronous features are just out of scope for this project.
 #[derive(Clone, Debug)]
 pub struct Story {
@@ -45,7 +45,7 @@ pub struct Story {
     temporary_evaluation_container: Option<Container>,
 
     main_container: Rc<Container>,
-    list_definitions: HashMap<String, ListDefinition>,
+    list_definitions: ListDefinitions,
     // TODO: don't require these to be `fn`, and allow `Box<dyn FnMut>` or something instead.
     //       requires implementing Debug manually
     //       maybe these can be an `Inventory` thing too? probably not
@@ -197,8 +197,8 @@ impl Story {
                     DivertTarget::Variable(variable) => {
                         let value = self.get_variable_value(variable)
                             .expect(&format!("Attempted to divert to a variable target, but no variable was found named {}", variable));
-                        
-                        match value {
+
+                        match &value {
                             Value::DivertTarget(path) => self.diverted_pointer = self.pointer_to_path(path, None),
                             _ => panic!("Attempted to divert to a variable target, but variable {} contained a non-divert target value {:?}", variable, value),
                         }
@@ -280,11 +280,11 @@ impl Story {
 
 // Variables
 impl Story {
-    fn get_variable_value(&self, variable: &String) -> Option<&Value> {
-        self.get_variable_with_context(variable, None);
+    fn get_variable_value(&self, variable: &String) -> Option<Value> {
+        self.get_variable_with_context(variable, None)
     }
 
-    fn get_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<&Value> {
+    fn get_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {
         let raw_value = self.get_raw_variable_with_context(variable, context)?;
 
         Some(raw_value)
@@ -304,13 +304,26 @@ impl Story {
                     .map(std::ops::Deref::deref);
                 if default_value.is_some() { return default_value.cloned(); }
 
-                let list_item_value = self.find_single_item_list_with_name(variable);
+                let list_item_value = self.list_definitions.lookup_list_entry(variable)
+                    .map(|entry| List::of_single_value(entry.clone()).into());
                 if list_item_value.is_some() { return list_item_value; }
             }
+            _ => {}
+        }
+
+        match context {
+            None => self.get_temporary_variable(variable, None),
+            Some(VariableContext::Temporary(context)) => self.get_temporary_variable(variable, Some(context)),
+            _ => None
         }
     }
 
-    fn find_single_item_list_with_name(&self, variable: &String) -> Option<Value> {
-        
+    fn get_temporary_variable(&self, variable: &String, context: Option<usize>) -> Option<Value> {
+        let current_thread = self.threads.last()?;
+        let element = match context {
+            None => current_thread.elements.last(),
+            Some(index) => current_thread.elements.get(index),
+        };
+        element?.temporary_variables.get(variable).and_then(TryAsRef::<Rc<Value>>::try_as_ref).map(std::ops::Deref::deref).cloned()
     }
 }
