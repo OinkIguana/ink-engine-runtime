@@ -9,6 +9,8 @@ pub struct Pointer {
 }
 
 impl Pointer {
+    pub(crate) const NULL: Pointer = Pointer { container: None, index: None };
+
     pub(crate) fn to_start_of_container(container: &Rc<Container>) -> Self {
         Self { 
             container: Some(Rc::downgrade(container)), 

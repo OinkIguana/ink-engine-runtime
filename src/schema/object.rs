@@ -1,5 +1,6 @@
-use super::*;
+use std::convert::TryInto;
 use std::rc::Rc;
+use super::*;
 
 pub(crate) trait NamedObject {
     fn name(&self) -> &str;
@@ -24,7 +25,7 @@ pub enum Object {
     Tag(Rc<Tag>),
     VariableAssignment(Rc<VariableAssignment>),
     VariableReference(Rc<VariableReference>),
-    Value(Rc<Value>),
+    Value(Value),
     Void,
 }
 
@@ -97,7 +98,6 @@ impl Object {
     }
 }
 
-impl std::cmp::Eq for Object {}
 impl std::cmp::PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
         use Object::*;
@@ -113,7 +113,7 @@ impl std::cmp::PartialEq for Object {
             (Tag(a), Tag(b)) => Rc::ptr_eq(a, b),
             (VariableAssignment(a), VariableAssignment(b)) => Rc::ptr_eq(a, b),
             (VariableReference(a), VariableReference(b)) => Rc::ptr_eq(a, b),
-            (Value(a), Value(b)) => Rc::ptr_eq(a, b),
+            (Value(a), Value(b)) => a.eq(b),
             (Void, Void) => true,
             _ => false,
         }
@@ -210,8 +210,8 @@ impl TryAsRef<Rc<VariableReference>> for Object {
     }
 }
 
-impl TryAsRef<Rc<Value>> for Object {
-    fn try_as_ref(&self) -> Option<&Rc<Value>> {
+impl TryAsRef<Value> for Object {
+    fn try_as_ref(&self) -> Option<&Value> {
         match self {
             Self::Value(ref value) => Some(value),
             _ => None

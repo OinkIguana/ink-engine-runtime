@@ -1,4 +1,4 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ListEntry {
     pub(crate) origin: String,
     pub(crate) name: String,
@@ -11,7 +11,7 @@ pub struct ListDefinition {
     pub(crate) items: Vec<ListEntry>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Eq, PartialEq, Debug)]
 pub struct List {
     pub(crate) items: Vec<ListEntry>,
 }

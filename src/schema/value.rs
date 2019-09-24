@@ -1,6 +1,7 @@
-use super::{VariableContext, List, Path};
+use std::convert::TryInto;
+use super::{TryAsRef, VariableContext, List, Path};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -51,17 +52,22 @@ impl From<String> for Value {
     }
 }
 
-
 impl From<List> for Value {
     fn from(value: List) -> Self {
         Self::List(value)
     }
 }
 
+impl From<Path> for Value {
+    fn from(value: Path) -> Self {
+        Self::DivertTarget(value)
+    }
+}
+
 // TODO: settle on some representation for the other types that is good enough to pass out to
 // external functions in the future. For now, these will suffice as a proof of concept.
 
-impl super::TryAsRef<i64> for Value {
+impl TryAsRef<i64> for Value {
     fn try_as_ref(&self) -> Option<&i64> {
         match self {
             Value::Int(ref value) => Some(value),
@@ -70,7 +76,7 @@ impl super::TryAsRef<i64> for Value {
     }
 }
 
-impl super::TryAsRef<f64> for Value {
+impl TryAsRef<f64> for Value {
     fn try_as_ref(&self) -> Option<&f64> {
         match self {
             Value::Float(ref value) => Some(value),
@@ -79,7 +85,7 @@ impl super::TryAsRef<f64> for Value {
     }
 }
 
-impl super::TryAsRef<String> for Value {
+impl TryAsRef<String> for Value {
     fn try_as_ref(&self) -> Option<&String> {
         match self {
             Value::String(ref value) => Some(value),
@@ -88,37 +94,65 @@ impl super::TryAsRef<String> for Value {
     }
 }
 
-impl std::convert::TryInto<i64> for &Value {
+impl TryAsRef<List> for Value {
+    fn try_as_ref(&self) -> Option<&List> {
+        match self {
+            Value::List(ref value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+impl TryAsRef<Path> for Value {
+    fn try_as_ref(&self) -> Option<&Path> {
+        match self {
+            Value::DivertTarget(ref value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+impl TryInto<i64> for Value {
     type Error = ();
     fn try_into(self) -> Result<i64, Self::Error> {
         match self {
-            Value::Int(value) => Ok(*value),
-            Value::Float(value) => Ok(*value as i64),
+            Value::Int(value) => Ok(value),
+            Value::Float(value) => Ok(value as i64),
             Value::String(value) => value.parse().map_err(|_| ()),
             _ => Err(()),
         }
     }
 }
 
-impl std::convert::TryInto<f64> for &Value {
+impl TryInto<f64> for Value {
     type Error = ();
     fn try_into(self) -> Result<f64, Self::Error> {
         match self {
-            Value::Int(value) => Ok(*value as f64),
-            Value::Float(value) => Ok(*value),
+            Value::Int(value) => Ok(value as f64),
+            Value::Float(value) => Ok(value),
             Value::String(value) => value.parse().map_err(|_| ()),
             _ => Err(()),
         }
     }
 }
 
-impl std::convert::TryInto<String> for &Value {
+impl TryInto<String> for Value {
     type Error = ();
     fn try_into(self) -> Result<String, Self::Error> {
         match self {
             Value::Int(value) => Ok(format!("{}", value)),
             Value::Float(value) => Ok(format!("{}", value)),
-            Value::String(value) => Ok(value.to_owned()),
+            Value::String(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryInto<Path> for Value {
+    type Error = ();
+    fn try_into(self) -> Result<Path, Self::Error> {
+        match self {
+            Value::DivertTarget(value) => Ok(value),
             _ => Err(()),
         }
     }

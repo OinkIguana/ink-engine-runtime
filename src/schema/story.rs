@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -147,6 +148,11 @@ impl Story {
     pub fn can_continue(&self) -> bool {
         !self.current_pointer().is_null() && !self.has_error()
     }
+
+    fn output_stream_dirty(&self) {
+        self.current_text.borrow_mut().take();
+        self.current_tags.borrow_mut().take();
+    }
 }
 
 // Story progression
@@ -179,7 +185,7 @@ impl Story {
 
         match current_obj {
             Object::Divert(divert) => self.perform_divert(divert),
-            Object::ControlCommand(command) => false,
+            Object::ControlCommand(command) => self.perform_control_command(*command),
             Object::VariableAssignment(assignment) => false,
             Object::VariableReference(reference) => false,
             Object::NativeFunctionCall(call) => false,
@@ -232,6 +238,58 @@ impl Story {
 
         true
     }
+
+    fn perform_control_command(&mut self, command: ControlCommand) -> bool {
+        match command {
+            ControlCommand::NoOp => {}
+            ControlCommand::EvalStart => self.current_element_mut().in_expression_evaluation = true,
+            ControlCommand::EvalEnd => self.current_element_mut().in_expression_evaluation = false,
+            ControlCommand::EvalOutput => {
+                if let Some(output) = self.evaluation_stack.pop() {
+                    if output != Object::Void {
+                        self.output_stream.push(output);
+                    }
+                }
+            }
+            ControlCommand::Duplicate => self.evaluation_stack.push(self.evaluation_stack.first().unwrap().clone()),
+            ControlCommand::PopEvaluatedValue => { self.evaluation_stack.pop(); }
+            | ControlCommand::PopFunction
+            | ControlCommand::PopTunnel => {
+                let pop_type = if command == ControlCommand::PopFunction { PushPopType::Function } else { PushPopType::Tunnel };
+                let override_path: Option<Path> = if command == ControlCommand::PopTunnel {
+                    let object = self.evaluation_stack.pop().expect("Expected value when popping tunnel, but no values existed on the evaluation stack");
+                    match object {
+                        Object::Void => None,
+                        Object::Value(value) => Some(value.try_into().expect("Invalid type of divert target override value encountered when popping tunnel")),
+                        _ => panic!("Invalid divert target override object encountered when popping tunnel. Expected Void or Value, found {:?}", object),
+                    }
+                } else { None };
+
+                if self.try_exit_function_evaluation_from_game() {
+                    return true;
+                }
+                if self.current_element().push_pop_type != pop_type {
+                    panic!("Expected to pop {}, but instead attempted to pop {}", self.current_element().push_pop_type, pop_type);
+                }
+                if self.current_thread().elements.is_empty() {
+                    panic!("Expected end of flow, but instead attempted to pop {}", pop_type);
+                }
+
+                self.pop_call_stack();
+            }
+            _ => unimplemented!("WIP"),
+        }
+
+        true
+    }
+
+    fn try_exit_function_evaluation_from_game(&mut self) -> bool {
+        if self.current_element().push_pop_type == PushPopType::FunctionEvaluationFromGame {
+            self.set_current_pointer(Pointer::NULL);
+            self.did_safe_exit = true;
+            true
+        } else { false }
+    }
 }
 
 // Story helpers
@@ -247,12 +305,52 @@ impl Story {
         }
     }
 
+    fn pointer_to_path(&self, path: &Path, relative_to: Option<Object>)-> Option<Pointer> {
+        if path.is_empty() { return None }
+        if path.is_relative {
+            match relative_to {
+                Some(object) => return object.resolve_path(path).as_ref().map(Pointer::to),
+                None => panic!("Cannot resolve relative path with no provided root"),
+            }
+        }
+        self.main_container.content_at_path(path).as_ref().map(Pointer::to)
+    }
+
+    fn trim_whitespace_from_function_end(&mut self) {
+        let function_start_point = self.current_element().function_start_in_output_stream;
+        for i in (usize::max(function_start_point, 0)..=self.output_stream.len()).rev() {
+            let obj = &self.output_stream[i];
+            if let Some(text) = TryAsRef::<String>::try_as_ref(obj) {
+                // NB: may differ from original implementation behaviour in this line
+                //     A string value containing some combination of both spaces/tabs and newline
+                //     will not be classified as whitespace in the original implementation, but
+                //     will here
+                if !text.trim().is_empty() { // if some of the string remains, it's not whitespace, so we can stop trimming
+                    break;
+                }
+                self.output_stream.remove(i);
+                self.output_stream_dirty();
+            }
+        }
+    }
+}
+
+// Call stack
+impl Story {
+    fn current_thread(&self) -> &Thread {
+        self.threads.last().unwrap()
+    }
+
+    fn current_thread_mut(&mut self) -> &mut Thread {
+        self.threads.last_mut().unwrap()
+    }
+
     fn current_element(&self) -> &Element {
-        self.threads.last().unwrap().elements.last().unwrap()
+        self.current_thread().elements.last().unwrap()
     }
 
     fn current_element_mut(&mut self) -> &mut Element {
-        self.threads.last_mut().unwrap().elements.last_mut().unwrap()
+        self.current_thread_mut().elements.last_mut().unwrap()
     }
 
     fn current_pointer(&self) -> Pointer {
@@ -263,15 +361,11 @@ impl Story {
         self.current_element_mut().current_pointer = pointer;
     }
 
-    fn pointer_to_path(&self, path: &Path, relative_to: Option<Object>)-> Option<Pointer> {
-        if path.is_empty() { return None }
-        if path.is_relative {
-            match relative_to {
-                Some(object) => return object.resolve_path(path).as_ref().map(Pointer::to),
-                None => panic!("Cannot resolve relative path with no provided root"),
-            }
+    fn pop_call_stack(&mut self) {
+        if self.current_element().push_pop_type == PushPopType::Function {
+            self.trim_whitespace_from_function_end();
         }
-        self.main_container.content_at_path(path).as_ref().map(Pointer::to)
+        self.current_thread_mut().elements.pop();
     }
 }
 
@@ -295,13 +389,11 @@ impl Story {
             | None
             | Some(VariableContext::Global) => {
                 let value = self.global_variables.get(variable)
-                    .and_then(TryAsRef::<Rc<Value>>::try_as_ref)
-                    .map(std::ops::Deref::deref);
+                    .and_then(TryAsRef::<Value>::try_as_ref);
                 if value.is_some() { return value.cloned(); }
 
                 let default_value = self.default_global_variables.get(variable)
-                    .and_then(TryAsRef::<Rc<Value>>::try_as_ref)
-                    .map(std::ops::Deref::deref);
+                    .and_then(TryAsRef::<Value>::try_as_ref);
                 if default_value.is_some() { return default_value.cloned(); }
 
                 let list_item_value = self.list_definitions.lookup_list_entry(variable)
@@ -324,6 +416,6 @@ impl Story {
             None => current_thread.elements.last(),
             Some(index) => current_thread.elements.get(index),
         };
-        element?.temporary_variables.get(variable).and_then(TryAsRef::<Rc<Value>>::try_as_ref).map(std::ops::Deref::deref).cloned()
+        element?.temporary_variables.get(variable).and_then(TryAsRef::<Value>::try_as_ref).cloned()
     }
 }
