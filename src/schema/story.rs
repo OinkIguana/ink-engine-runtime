@@ -178,56 +178,59 @@ impl Story {
         };
 
         match current_obj {
-            Object::Divert(divert) => {
-                if divert.is_conditional {
-                    let val = self.evaluation_stack.pop().expect("No values on evaluation stack to pop when checking Divert condition");
-                    // if the condition is false, return true to cancel the divert
-                    if !val.is_truthy() {
-                        return true;
-                    }
-                }
+            Object::Divert(divert) => self.perform_divert(divert),
+            Object::ControlCommand(command) => false,
+            Object::VariableAssignment(assignment) => false,
+            Object::VariableReference(reference) => false,
+            Object::NativeFunctionCall(call) => false,
+            _ => false,
+        }
+    }
 
-                match &divert.target {
-                    DivertTarget::Variable(variable) => {
-                        let value = self.get_variable_value(variable)
-                            .expect(&format!("Attempted to divert to a variable target, but no variable was found named {}", variable));
+    fn perform_divert(&mut self, divert: Rc<Divert>) -> bool {
+        if divert.is_conditional {
+            let val = self.evaluation_stack.pop().expect("No values on evaluation stack to pop when checking Divert condition");
+            // if the condition is false, return true to cancel the divert
+            if !val.is_truthy() {
+                return true;
+            }
+        }
 
-                        match &value {
-                            Value::DivertTarget(path) => self.diverted_pointer = self.pointer_to_path(path, None),
-                            _ => panic!("Attempted to divert to a variable target, but variable {} contained a non-divert target value {:?}", variable, value),
-                        }
-                    },
-                    DivertTarget::External { path, args } => {},
-                    DivertTarget::Path(path) => self.diverted_pointer = self.pointer_to_path(path, None),
-                }
+        match &divert.target {
+            DivertTarget::Variable(variable) => {
+                let value = self.get_variable_value(variable)
+                    .expect(&format!("Attempted to divert to a variable target, but no variable was found named {}", variable));
 
-                if divert.pushes_to_stack {
-                    let element = Element {
-                        current_pointer: self.current_pointer(),
-                        in_expression_evaluation: false,
-                        temporary_variables: HashMap::default(),
-                        push_pop_type: divert.stack_push_type,
-                        evaluation_stack_size_when_called: 0,
-                        function_start_in_output_stream: self.output_stream.len(),
-                    };
-                    self.threads
-                        .last_mut()
-                        .unwrap()
-                        .elements
-                        .push(element);
-                }
-
-                if self.diverted_pointer.is_none() && !divert.is_external() {
-                    panic!("Attempted to divert to target {:?}, but could not", divert.target);
+                match &value {
+                    Value::DivertTarget(path) => self.diverted_pointer = self.pointer_to_path(path, None),
+                    _ => panic!("Attempted to divert to a variable target, but variable {} contained a non-divert target value {:?}", variable, value),
                 }
             },
-            Object::ControlCommand(command) => {},
-            Object::VariableAssignment(assignment) => {},
-            Object::VariableReference(reference) => {},
-            Object::NativeFunctionCall(call) => {},
-            _ => return false,
+            DivertTarget::External { path, args } => {},
+            DivertTarget::Path(path) => self.diverted_pointer = self.pointer_to_path(path, None),
         }
-        return true
+
+        if divert.pushes_to_stack {
+            let element = Element {
+                current_pointer: self.current_pointer(),
+                in_expression_evaluation: false,
+                temporary_variables: HashMap::default(),
+                push_pop_type: divert.stack_push_type,
+                evaluation_stack_size_when_called: 0,
+                function_start_in_output_stream: self.output_stream.len(),
+            };
+            self.threads
+                .last_mut()
+                .unwrap()
+                .elements
+                .push(element);
+        }
+
+        if self.diverted_pointer.is_none() && !divert.is_external() {
+            panic!("Attempted to divert to target {:?}, but could not", divert.target);
+        }
+
+        true
     }
 }
 
