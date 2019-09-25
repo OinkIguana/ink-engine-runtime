@@ -74,9 +74,6 @@ pub struct Story {
     has_validated_externals: bool,
 
     // StoryState stuff
-    current_errors: Vec<String>,
-    current_warnings: Vec<String>,
-
     output_stream: Vec<Object>,
     current_text: RefCell<Option<String>>,
     current_tags: RefCell<Option<Vec<String>>>,
@@ -110,25 +107,6 @@ impl Story {
 
     /// The minimum legacy version of ink that can be loaded by the current version of the code.
     pub const INK_VERSION_MINIMUM_COMPATIBLE: u32 = 18;
-}
-
-// Error accessors
-impl Story {
-    pub fn has_error(&self) -> bool {
-        !self.current_errors.is_empty()
-    }
-
-    pub fn has_warning(&self) -> bool {
-        !self.current_warnings.is_empty()
-    }
-
-    pub fn current_errors(&self) -> &[String] {
-        &self.current_errors
-    }
-
-    pub fn current_warnings(&self) -> &[String] {
-        &self.current_warnings
-    }
 }
 
 // Accessors
@@ -171,7 +149,7 @@ impl Story {
     }
 
     pub fn can_continue(&self) -> bool {
-        !self.current_pointer().is_null() && !self.has_error()
+        !self.current_pointer().is_null()
     }
 
     fn output_stream_dirty(&self) {
@@ -370,7 +348,7 @@ impl Story {
                 self.evaluation_stack.push(Object::Void);
             }
             ControlCommand::VisitIndex => {
-                let pointer = &self.current_element().current_pointer;
+                let pointer = self.current_pointer();
                 let object = pointer.container().unwrap();
                 let path = object.path();
                 let visit_count = self.visit_counts
@@ -389,7 +367,7 @@ impl Story {
                     self.threads.pop();
                 } else {
                     self.did_safe_exit = true;
-                    self.current_element_mut().current_pointer = Pointer::NULL;
+                    self.set_current_pointer(Pointer::NULL);
                 }
             }
             ControlCommand::End => {
@@ -489,7 +467,7 @@ impl Story {
     // previous shuffle indices on the way. The shuffle must be deterministic
     fn next_sequence_shuffle_index(&mut self) -> i64 {
         let num_elements: i64 = *self.evaluation_stack.pop().as_ref().and_then(TryAsRef::try_as_ref).expect("Expected Int value (num_elements) when calculating next sequence shuffle index");
-        let seq_container = self.current_element().current_pointer.container().expect("Invalid current pointer when calculating next sequence shuffle index");
+        let seq_container = self.current_pointer().container().expect("Invalid current pointer when calculating next sequence shuffle index");
         let seq_count: i64 = *self.evaluation_stack.pop().as_ref().and_then(TryAsRef::try_as_ref).expect("Expected Int value (seq_count) when calculating next sequence shuffle index");
         let loop_index = (seq_count / num_elements) as u64;
         let iteration_index = seq_count % num_elements;
