@@ -1,7 +1,9 @@
 use std::convert::TryInto;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::cell::RefCell;
+use rand_pcg::Pcg64;
+use rand::{Rng, SeedableRng};
 
 use super::*;
 
@@ -59,8 +61,8 @@ pub struct Story {
 
     diverted_pointer: Option<Pointer>,
 
-    story_seed: usize,
-    previous_random: usize,
+    story_seed: u64,
+    previous_random: u64,
     did_safe_exit: bool,
 
     current_turn_index: usize,
@@ -185,7 +187,7 @@ impl Story {
 
         match current_obj {
             Object::Divert(divert) => self.perform_divert(divert),
-            Object::ControlCommand(command) => self.perform_control_command(*command),
+            Object::ControlCommand(command) => self.perform_control_command(command),
             Object::VariableAssignment(assignment) => false,
             Object::VariableReference(reference) => false,
             Object::NativeFunctionCall(call) => false,
@@ -276,6 +278,87 @@ impl Story {
                 }
 
                 self.pop_call_stack();
+            }
+            ControlCommand::BeginString => {
+                assert!(!self.current_element().in_expression_evaluation, "Error processing control command: Must be in expression evaluation mode to begin a string");
+                self.current_element_mut().in_expression_evaluation = false;
+                self.output_stream.push(Object::ControlCommand(ControlCommand::BeginString));
+            }
+            ControlCommand::EndString => {
+                let mut string_content = VecDeque::new();
+                let mut output_count_consumed = 0;
+                for i in (0..=self.output_stream.len()).rev() {
+                    let obj = &self.output_stream[i];
+                    output_count_consumed += 1;
+                    if TryAsRef::<ControlCommand>::try_as_ref(obj).is_some() { break }
+                    if let Some(string) = TryAsRef::<String>::try_as_ref(obj) {
+                        string_content.push_front(string.as_str());
+                    }
+                }
+                let string: String = string_content.into_iter().collect();
+                self.output_stream.truncate(self.output_stream.len() - output_count_consumed);
+                self.output_stream.push(Object::Value(Value::String(string)));
+                self.current_element_mut().in_expression_evaluation = true;
+            }
+            ControlCommand::ChoiceCount => {
+                let count = self.current_choices.len() as i64;
+                self.evaluation_stack.push(Object::Value(Value::Int(count)));
+            }
+            ControlCommand::Turns => {
+                self.evaluation_stack.push(Object::Value(Value::Int(self.current_turn_index as i64)));
+            }
+            | ControlCommand::TurnsSince 
+            | ControlCommand::ReadCount => {
+                let object = self.evaluation_stack.pop();
+                let target = match object.as_ref().and_then(TryAsRef::<Path>::try_as_ref) {
+                    Some(target) => target,
+                    None => panic!("Expected to find a divert target value to check turns since/read count, but found {:?}", object),
+                };
+
+                let count = if command == ControlCommand::TurnsSince {
+                    self.visit_counts
+                        .get(target)
+                        .cloned()
+                        .map(|u| u as i64)
+                        .unwrap_or(0) // default is zero because never visited this one
+                } else {
+                    self.turn_indices
+                        .get(target)
+                        .cloned()
+                        .map(|u| u as i64)
+                        .unwrap_or(-1) // -1 to indicate never reached before
+                };
+
+                self.evaluation_stack.push(Object::Value(Value::Int(count)));
+            }
+            ControlCommand::Random => {
+                let max_int = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Invalid parameter for max value of RANDOM");
+                let min_int = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Invalid parameter for min value of RANDOM");
+                let result_seed = self.story_seed + self.previous_random;
+                let mut rng = Pcg64::seed_from_u64(result_seed as u64);
+                let result = rng.gen_range(min_int, max_int + 1);
+                self.previous_random = result as u64;
+                self.evaluation_stack.push(Object::Value(Value::Int(result)));
+            }
+            ControlCommand::SeedRandom => {
+                let seed = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Integer value was not provided to SEED_RANDOM");
+                self.story_seed = seed as u64;
+                self.previous_random = 0;
+                self.evaluation_stack.push(Object::Void);
+            }
+            ControlCommand::VisitIndex => {
+                let pointer = &self.current_element().current_pointer;
+                let object = pointer.resolve().unwrap();
+                let path = object.path();
+                let visit_count = self.visit_counts
+                    .get(&path)
+                    .cloned()
+                    .unwrap_or(0);
+                self.evaluation_stack.push(Object::Value(Value::Int(visit_count as i64- 1)));
+            }
+            ControlCommand::SequenceShuffleIndex => {
+                // TODO: later
+                unimplemented!();
             }
             _ => unimplemented!("WIP"),
         }

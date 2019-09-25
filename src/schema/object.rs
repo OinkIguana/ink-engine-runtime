@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::rc::Rc;
 use super::*;
 
@@ -17,7 +16,7 @@ pub enum Object {
     Choice(Rc<Choice>),
     ChoicePoint(Rc<ChoicePoint>),
     Container(Rc<Container>),
-    ControlCommand(Rc<ControlCommand>),
+    ControlCommand(ControlCommand),
     Divert(Rc<Divert>),
     Glue(Rc<Glue>),
     NativeFunctionCall(Rc<NativeFunctionCall>),
@@ -105,7 +104,7 @@ impl std::cmp::PartialEq for Object {
             (Choice(a), Choice(b)) => Rc::ptr_eq(a, b),
             (ChoicePoint(a), ChoicePoint(b)) => Rc::ptr_eq(a, b),
             (Container(a), Container(b)) => Rc::ptr_eq(a, b),
-            (ControlCommand(a), ControlCommand(b)) => Rc::ptr_eq(a, b),
+            (ControlCommand(a), ControlCommand(b)) => a.eq(b),
             (Divert(a), Divert(b)) => Rc::ptr_eq(a, b),
             (Glue(a), Glue(b)) => Rc::ptr_eq(a, b),
             (NativeFunctionCall(a), NativeFunctionCall(b)) => Rc::ptr_eq(a, b),
@@ -142,6 +141,15 @@ impl TryAsRef<Rc<Container>> for Object {
     fn try_as_ref(&self) -> Option<&Rc<Container>> {
         match self {
             Self::Container(ref value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+impl TryAsRef<ControlCommand> for Object {
+    fn try_as_ref(&self) -> Option<&ControlCommand> {
+        match self {
+            Self::ControlCommand(ref value) => Some(value),
             _ => None,
         }
     }
