@@ -2,6 +2,7 @@ use std::convert::TryInto;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt::{self, Debug, Formatter};
 use rand_pcg::Pcg64;
 use rand::{Rng, SeedableRng};
 
@@ -59,7 +60,7 @@ impl Thread {
 /// handled internally (`Story` will implement `Serialize`/`Deserialize`), so a simple `story.clone()` will
 /// be enough to take a snapshot and save it in the background on another thread while the game
 /// still plays. Asynchronous features are just out of scope for this project.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Story {
     // Story stuff
     temporary_evaluation_container: Option<Container>,
@@ -69,7 +70,8 @@ pub struct Story {
     // TODO: don't require these to be `fn`, and allow `Box<dyn FnMut>` or something instead.
     //       requires implementing Debug manually
     //       maybe these can be an `Inventory` thing too? probably not
-    variable_observers: HashMap<String, Vec<fn(String, Value)>>,
+    //       also maybe they aren't needed at all... so we can do this part when they are needed instead
+    //variable_observers: HashMap<String, Vec<Rc<RefCell<dyn FnMut(&String, &Value)>>>>,
 
     has_validated_externals: bool,
 
@@ -99,6 +101,12 @@ pub struct Story {
     threads: Vec<Thread>,
     thread_counter: usize,
     start_of_root: Pointer,
+}
+
+impl Debug for Story {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "Story {{ .. }}")
+    }
 }
 
 impl Story {
@@ -189,7 +197,7 @@ impl Story {
         match current_obj {
             Object::Divert(divert) => self.perform_divert(divert),
             Object::ControlCommand(command) => self.perform_control_command(command),
-            Object::VariableAssignment(assignment) => false,
+            Object::VariableAssignment(assignment) => self.perform_variable_assignment(assignment),
             Object::VariableReference(reference) => false,
             Object::NativeFunctionCall(call) => false,
             _ => false,
@@ -406,6 +414,12 @@ impl Story {
         true
     }
 
+    fn perform_variable_assignment(&mut self, assignment: Rc<VariableAssignment>) -> bool {
+        let assigned_value = self.evaluation_stack.pop().expect("Value must be provided for variable assignment");
+        self.assign(assignment, assigned_value);
+        true
+    }
+
     fn try_exit_function_evaluation_from_game(&mut self) -> bool {
         if self.current_element().push_pop_type == PushPopType::FunctionEvaluationFromGame {
             self.set_current_pointer(Pointer::NULL);
@@ -523,22 +537,22 @@ impl Story {
 // Variables
 impl Story {
     fn get_variable_value(&self, variable: &String) -> Option<Value> {
-        self.get_variable_with_context(variable, None)
+        self.get_variable_with_context(variable, VariableContext::Unknown)
     }
 
-    fn get_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {
+    fn get_variable_with_context(&self, variable: &String, context: VariableContext) -> Option<Value> {
         let raw_value = self.get_raw_variable_with_context(variable, context)?;
 
         match &raw_value {
-            Value::VariablePointer(name, context) => self.get_variable_with_context(name, Some(*context)),
+            Value::VariablePointer(name, context) => self.get_variable_with_context(name, *context),
             _ => Some(raw_value),
         }
     }
 
-    fn get_raw_variable_with_context(&self, variable: &String, context: Option<VariableContext>) -> Option<Value> {
+    fn get_raw_variable_with_context(&self, variable: &String, context: VariableContext) -> Option<Value> {
         match context {
-            | None
-            | Some(VariableContext::Global) => {
+            | VariableContext::Unknown
+            | VariableContext::Global => {
                 let value = self.global_variables.get(variable)
                     .and_then(TryAsRef::<Value>::try_as_ref);
                 if value.is_some() { return value.cloned(); }
@@ -555,18 +569,103 @@ impl Story {
         }
 
         match context {
-            None => self.get_temporary_variable(variable, None),
-            Some(VariableContext::Temporary(context)) => self.get_temporary_variable(variable, Some(context)),
-            _ => None
+            VariableContext::Unknown => self.get_temporary_variable(variable, VariableContext::Unknown),
+            VariableContext::Temporary(context) => self.get_temporary_variable(variable, VariableContext::Temporary(context)),
+            VariableContext::Global => None
         }
     }
 
-    fn get_temporary_variable(&self, variable: &String, context: Option<usize>) -> Option<Value> {
+    fn get_temporary_variable(&self, variable: &String, context: VariableContext) -> Option<Value> {
         let current_thread = self.threads.last()?;
         let element = match context {
-            None => current_thread.elements.last(),
-            Some(index) => current_thread.elements.get(index),
+            VariableContext::Unknown | VariableContext::Global => current_thread.elements.last(),
+            VariableContext::Temporary(index) => current_thread.elements.get(index),
         };
         element?.temporary_variables.get(variable).and_then(TryAsRef::<Value>::try_as_ref).cloned()
+    }
+
+    fn set_temporary_variable(&mut self, name: String, value: Object, is_new_declaration: bool, context: VariableContext) {
+        let index = match context {
+            VariableContext::Global => panic!("Cannot set temporary variable if it is a global variable"),
+            VariableContext::Temporary(index) => index,
+            VariableContext::Unknown => self.current_thread().elements.len() - 1,
+        };
+        let old_value = self.current_thread().elements[index].temporary_variables.get(&name).cloned();
+        if !is_new_declaration && old_value.is_none() {
+            panic!("Variable {} is not defined in this context", name);
+        }
+        let new_value = match (old_value, value) {
+            (Some(Object::Value(Value::List(List { origins, .. }))), Object::Value(Value::List(list))) => Object::Value(Value::List(list.with_empty_origins(&origins))),
+            (_, value) => value,
+        };
+        self.emit_variable_changed_event(&name, &new_value);
+        self.current_thread_mut().elements[index].temporary_variables.insert(name, new_value);
+    }
+
+    fn set_global_variable(&mut self, name: String, value: Object) {
+        let old_value = self.global_variables.get(&name).cloned();
+        let new_value = match (old_value, value) {
+            (Some(Object::Value(Value::List(List { origins, .. }))), Object::Value(Value::List(list))) => Object::Value(Value::List(list.with_empty_origins(&origins))),
+            (_, value) => value,
+        };
+        self.emit_variable_changed_event(&name, &new_value);
+        self.global_variables.insert(name, new_value);
+    }
+
+    fn assign(&mut self, assignment: Rc<VariableAssignment>, mut value: Object) {
+        let mut name = assignment.variable_name.clone();
+        let mut assign_global = if assignment.is_new_declaration { assignment.is_global } else { self.global_variable_exists(&name) };
+        let mut context = VariableContext::Unknown;
+        if assignment.is_new_declaration {
+            // creating a new variable pointer reference, we do this thing for some reason
+            value = match value {
+                Object::Value(Value::VariablePointer(name, context)) => Object::Value(self.resolve_variable_pointer(name, context).into()),
+                _ => value,
+            }
+        } else {
+            // assigning to existing variable... then do this thing!
+            while let Some(Value::VariablePointer(new_name, new_context)) = self.get_raw_variable_with_context(&name, context) {
+                name = new_name;
+                context = new_context;
+                assign_global = context == VariableContext::Global;
+            }
+        }
+
+        if assign_global {
+            self.set_global_variable(name, value);
+        } else {
+            self.set_temporary_variable(name, value, assignment.is_new_declaration, context);
+        }
+    }
+
+    fn resolve_variable_pointer(&self, name: String, context: VariableContext) -> (String, VariableContext) {
+        let context = match context {
+            VariableContext::Unknown => self.resolve_context_of_variable(&name),
+            _ => context,
+        };
+        let value = self.get_raw_variable_with_context(&name, context);
+        match value {
+            Some(Value::VariablePointer(name, context)) => (name, context),
+            _ => (name, context),
+        }
+    }
+
+    fn resolve_context_of_variable(&self, name: &String) -> VariableContext {
+        if self.global_variable_exists(name) {
+            VariableContext::Global
+        } else {
+            VariableContext::Temporary(self.current_thread().elements.len())
+        }
+    }
+
+    fn global_variable_exists(&self, name: &String) -> bool {
+        self.global_variables.get(name).is_some() || self.default_global_variables.get(name).is_some()
+    }
+}
+
+// Events
+impl Story {
+    fn emit_variable_changed_event(&mut self, name: &String, value: &Object) {
+        // TODO: this is not yet needed, so it is not implemented
     }
 }

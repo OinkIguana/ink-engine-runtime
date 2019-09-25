@@ -23,6 +23,7 @@ impl ListDefinition {
 
 #[derive(Clone, Eq, PartialEq, Debug, Default)]
 pub struct List {
+    pub(crate) origins: Vec<String>,
     pub(crate) items: Vec<ListEntry>,
 }
 
@@ -40,6 +41,7 @@ impl List {
         };
 
         List {
+            origins: self.origins.clone(),
             items: self.items
                 .iter()
                 .filter(|entry| entry.value >= min && entry.value <= max)
@@ -49,7 +51,7 @@ impl List {
     }
 
     pub(crate) fn of_single_value(value: ListEntry) -> Self {
-        Self { items: vec![value] }
+        Self { origins: vec![value.origin.clone()], items: vec![value] }
     }
 
     pub(crate) fn len(&self) -> usize { self.items.len() }
@@ -73,5 +75,12 @@ impl List {
                 (Some(ListEntry { value: a, .. }), ListEntry { value: b, .. }) if b > a => Some(cur),
                 _ => max,
             })
+    }
+
+    pub(crate) fn with_empty_origins(mut self, origins: &[String]) -> Self {
+        if self.items.is_empty() {
+            self.origins = origins.to_vec();
+        }
+        self
     }
 }

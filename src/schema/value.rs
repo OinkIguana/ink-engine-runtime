@@ -64,6 +64,12 @@ impl From<Path> for Value {
     }
 }
 
+impl From<(String, VariableContext)> for Value {
+    fn from((name, context): (String, VariableContext)) -> Self {
+        Self::VariablePointer(name, context)
+    }
+}
+
 // TODO: settle on some representation for the other types that is good enough to pass out to
 // external functions in the future. For now, these will suffice as a proof of concept.
 
