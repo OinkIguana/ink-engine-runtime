@@ -19,11 +19,34 @@ pub struct Element {
     function_start_in_output_stream: usize,
 }
 
-#[derive(Clone, Debug)]
+impl Element {
+    fn new(push_pop_type: PushPopType, current_pointer: Pointer) -> Self {
+        Element {
+            current_pointer,
+            in_expression_evaluation: false,
+            temporary_variables: HashMap::new(),
+            push_pop_type,
+            evaluation_stack_size_when_called: 0,
+            function_start_in_output_stream: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Thread {
     elements: Vec<Element>,
     index: usize,
     previous_pointer: Pointer,
+}
+
+impl Thread {
+    fn new(push_pop_type: PushPopType, pointer: Pointer) -> Self {
+        Thread {
+            elements: vec![Element::new(push_pop_type, pointer)],
+            index: 0,
+            previous_pointer: Pointer::NULL,
+        }
+    }
 }
 
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
@@ -70,7 +93,7 @@ pub struct Story {
     turn_indices: HashMap<Path, usize>,
 
     // VariablesState stuff
-    // TODO: investigate whether `evaluation_stack` and variables hold `Object` or only `Value`
+    // TODO: investigate whether variables hold `Object` or only `Value`
     global_variables: HashMap<String, Object>,
     default_global_variables: HashMap<String, Object>,
     evaluation_stack: Vec<Object>,
@@ -307,7 +330,7 @@ impl Story {
             ControlCommand::Turns => {
                 self.evaluation_stack.push(Object::Value(Value::Int(self.current_turn_index as i64)));
             }
-            | ControlCommand::TurnsSince 
+            | ControlCommand::TurnsSince
             | ControlCommand::ReadCount => {
                 let object = self.evaluation_stack.pop();
                 let target = match object.as_ref().and_then(TryAsRef::<Path>::try_as_ref) {
@@ -332,8 +355,8 @@ impl Story {
                 self.evaluation_stack.push(Object::Value(Value::Int(count)));
             }
             ControlCommand::Random => {
-                let max_int = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Invalid parameter for max value of RANDOM");
-                let min_int = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Invalid parameter for min value of RANDOM");
+                let max_int = self.evaluation_stack.pop().and_then(|value| TryInto::<i64>::try_into(value).ok()).expect("Invalid parameter for max value of RANDOM");
+                let min_int = self.evaluation_stack.pop().and_then(|value| TryInto::<i64>::try_into(value).ok()).expect("Invalid parameter for min value of RANDOM");
                 let result_seed = self.story_seed + self.previous_random;
                 let mut rng = Pcg64::seed_from_u64(result_seed as u64);
                 let result = rng.gen_range(min_int, max_int + 1);
@@ -341,26 +364,65 @@ impl Story {
                 self.evaluation_stack.push(Object::Value(Value::Int(result)));
             }
             ControlCommand::SeedRandom => {
-                let seed = self.evaluation_stack.pop().as_ref().and_then(TryAsRef::<i64>::try_as_ref).cloned().expect("Integer value was not provided to SEED_RANDOM");
+                let seed = self.evaluation_stack.pop().and_then(|value| TryInto::<i64>::try_into(value).ok()).expect("Integer value was not provided to SEED_RANDOM");
                 self.story_seed = seed as u64;
                 self.previous_random = 0;
                 self.evaluation_stack.push(Object::Void);
             }
             ControlCommand::VisitIndex => {
                 let pointer = &self.current_element().current_pointer;
-                let object = pointer.resolve().unwrap();
+                let object = pointer.container().unwrap();
                 let path = object.path();
                 let visit_count = self.visit_counts
                     .get(&path)
                     .cloned()
                     .unwrap_or(0);
-                self.evaluation_stack.push(Object::Value(Value::Int(visit_count as i64- 1)));
+                self.evaluation_stack.push(Object::Value(Value::Int(visit_count as i64 - 1)));
             }
             ControlCommand::SequenceShuffleIndex => {
-                // TODO: later
-                unimplemented!();
+                let index = self.next_sequence_shuffle_index();
+                self.evaluation_stack.push(Object::Value(Value::Int(index)));
             }
-            _ => unimplemented!("WIP"),
+            ControlCommand::StartThread => { /* handled elsewhere */ }
+            ControlCommand::Done => {
+                if self.can_pop_thread() {
+                    self.threads.pop();
+                } else {
+                    self.did_safe_exit = true;
+                    self.current_element_mut().current_pointer = Pointer::NULL;
+                }
+            }
+            ControlCommand::End => {
+                self.force_end();
+            }
+            ControlCommand::ListFromInt => {
+                let int = self.evaluation_stack.pop().and_then(|value| TryInto::<i64>::try_into(value).ok()).expect("Needs int to make a list from int");
+                let list_name = self.evaluation_stack.pop().and_then(|value| TryInto::<String>::try_into(value).ok()).expect("Expected string value for list name when making a list from int");
+                let list_definition = self.list_definitions.list_definition_by_name(&list_name).expect(&format!("No list definition found named {}", list_name));
+                match list_definition.item_with_value(int) {
+                    Some(entry) => self.evaluation_stack.push(Object::Value(Value::List(List::of_single_value(entry.clone())))),
+                    None => self.evaluation_stack.push(Object::Value(Value::List(List::default()))),
+                }
+            }
+            ControlCommand::ListRange => {
+                let max = self.evaluation_stack.pop().and_then(|obj| TryInto::<Value>::try_into(obj).ok()).expect("Invalid value provided for list range max");
+                let min = self.evaluation_stack.pop().and_then(|obj| TryInto::<Value>::try_into(obj).ok()).expect("Invalid value provided for list range min");
+                let target_list = self.evaluation_stack.pop().and_then(|obj| TryInto::<List>::try_into(obj).ok()).expect("Invalid value provided for list range list");
+                let sliced = target_list.slice(min, max);
+                self.evaluation_stack.push(Object::Value(Value::List(sliced)));
+            }
+            ControlCommand::ListRandom => {
+                let list = self.evaluation_stack.pop().and_then(|obj| TryInto::<List>::try_into(obj).ok()).expect("Invalid list provided for list random");
+                if list.is_empty() {
+                    self.evaluation_stack.push(Object::Value(Value::List(List::default())));
+                } else {
+                    let result_seed = self.story_seed + self.previous_random;
+                    let mut random = Pcg64::seed_from_u64(result_seed);
+                    let index = random.gen_range(0, list.len() as u64);
+                    let entry = list.items[index as usize].clone();
+                    self.evaluation_stack.push(Object::Value(Value::List(List::of_single_value(entry))));
+                }
+            }
         }
 
         true
@@ -372,6 +434,12 @@ impl Story {
             self.did_safe_exit = true;
             true
         } else { false }
+    }
+
+    fn force_end(&mut self) {
+        self.current_choices.clear();
+        self.threads = vec![Thread::new(PushPopType::Tunnel, Pointer::NULL)];
+        self.did_safe_exit = true;
     }
 }
 
@@ -416,6 +484,26 @@ impl Story {
             }
         }
     }
+
+    // This method calculates the next sequence shuffle index iteratively by calculating all the
+    // previous shuffle indices on the way. The shuffle must be deterministic
+    fn next_sequence_shuffle_index(&mut self) -> i64 {
+        let num_elements: i64 = *self.evaluation_stack.pop().as_ref().and_then(TryAsRef::try_as_ref).expect("Expected Int value (num_elements) when calculating next sequence shuffle index");
+        let seq_container = self.current_element().current_pointer.container().expect("Invalid current pointer when calculating next sequence shuffle index");
+        let seq_count: i64 = *self.evaluation_stack.pop().as_ref().and_then(TryAsRef::try_as_ref).expect("Expected Int value (seq_count) when calculating next sequence shuffle index");
+        let loop_index = (seq_count / num_elements) as u64;
+        let iteration_index = seq_count % num_elements;
+
+        let path_str = format!("{}", seq_container.path());
+        let hash = path_str.chars().fold(0, |acc, ch| acc + ch as u64);
+        let seed = hash + loop_index + self.story_seed;
+        let mut random = Pcg64::seed_from_u64(seed);
+        let mut unpicked_indices = (0..num_elements).collect::<Vec<_>>();
+        (0..iteration_index).fold(0, move |_, _| {
+            let chosen: u64 = random.gen_range(0, unpicked_indices.len() as u64);
+            unpicked_indices.remove(chosen as usize)
+        })
+    }
 }
 
 // Call stack
@@ -450,6 +538,8 @@ impl Story {
         }
         self.current_thread_mut().elements.pop();
     }
+
+    fn can_pop_thread(&self) -> bool { self.threads.len() > 1 && self.current_element().push_pop_type != PushPopType::FunctionEvaluationFromGame }
 }
 
 // Variables

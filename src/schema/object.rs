@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::rc::Rc;
 use super::*;
 
@@ -241,6 +242,46 @@ impl TryAsRef<(dyn NamedObject + 'static)> for Object {
         match self {
             Self::Container(ref container) => Some(container),
             _ => None,
+        }
+    }
+}
+
+impl TryInto<Value> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<Value, Self::Error> {
+        match self {
+            Self::Value(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryInto<i64> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<i64, Self::Error> {
+        match self {
+            Self::Value(Value::Int(value)) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryInto<String> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<String, Self::Error> {
+        match self {
+            Self::Value(Value::String(value)) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryInto<List> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<List, Self::Error> {
+        match self {
+            Self::Value(Value::List(value)) => Ok(value),
+            _ => Err(()),
         }
     }
 }

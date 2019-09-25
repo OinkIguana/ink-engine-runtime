@@ -8,6 +8,10 @@ pub struct Pointer {
     pub(crate) index: Option<usize>,
 }
 
+impl Default for Pointer {
+    fn default() -> Self { Self::NULL }
+}
+
 impl Pointer {
     pub(crate) const NULL: Pointer = Pointer { container: None, index: None };
 
@@ -25,6 +29,13 @@ impl Pointer {
             container: Some(Rc::downgrade(&container)), 
             index,
         }
+    }
+
+    pub(crate) fn container(&self) -> Option<Object> {
+        self.container
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .map(|c| Object::Container(c))
     }
 
     pub(crate) fn resolve(&self) -> Option<Object> {

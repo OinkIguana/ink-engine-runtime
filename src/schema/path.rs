@@ -1,10 +1,21 @@
 use std::ops::Index;
+use std::fmt::{self, Display, Formatter};
 
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum Component {
     Index(usize),
     Name(String),
     Parent,
+}
+
+impl Display for Component {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Component::Index(int) => write!(f, "{}", int),
+            Component::Name(name) => write!(f, "{}", name),
+            Component::Parent => write!(f, "^"),
+        }
+    }
 }
 
 #[derive(Clone, Hash, Eq, PartialEq, Debug, Default)]
@@ -45,5 +56,15 @@ impl Index<usize> for Path {
     type Output = Component;
     fn index(&self, index: usize) -> &Self::Output {
         &self.parts[index]
+    }
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let part_strs: Vec<String> = self.parts
+            .iter()
+            .map(|comp| format!("{}", comp))
+            .collect();
+        write!(f, "{}", part_strs.join("."))
     }
 }

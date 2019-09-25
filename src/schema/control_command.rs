@@ -1,7 +1,6 @@
 #[repr(i8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ControlCommand {
-    NotSet = -1,
     EvalStart,
     EvalOutput,
     EvalEnd,

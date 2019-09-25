@@ -26,6 +26,10 @@ impl ListDefinitions {
         }
     }
 
+    pub(crate) fn list_definition_by_name(&self, name: &String) -> Option<&ListDefinition> {
+        self.list_definitions.get(name)
+    }
+    
     pub(crate) fn lookup_list_entry(&self, name: &String) -> Option<&ListEntry> {
         self.list_entry_lookup_cache.get(name)
     }
