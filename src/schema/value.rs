@@ -34,6 +34,12 @@ impl Value {
     }
 }
 
+impl From<bool> for Value {
+    fn from(value: bool) -> Self {
+        Self::Int(if value { 1 } else { 0 })
+    }
+}
+
 impl From<i64> for Value {
     fn from(value: i64) -> Self {
         Self::Int(value)

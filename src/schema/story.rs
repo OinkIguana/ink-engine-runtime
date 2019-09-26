@@ -199,7 +199,7 @@ impl Story {
             Object::ControlCommand(command) => self.perform_control_command(command),
             Object::VariableAssignment(assignment) => self.perform_variable_assignment(assignment),
             Object::VariableReference(reference) => self.perform_variable_reference(reference),
-            Object::NativeFunctionCall(call) => false,
+            Object::NativeFunctionCall(call) => self.perform_native_function_call(call),
             _ => false,
         }
     }
@@ -405,7 +405,7 @@ impl Story {
                     let result_seed = self.story_seed + self.previous_random;
                     let mut random = Pcg64::seed_from_u64(result_seed);
                     let index = random.gen_range(0, list.len() as u64);
-                    let entry = list.items[index as usize].clone();
+                    let entry = list.items.iter().nth(index as usize).cloned().unwrap();
                     self.evaluation_stack.push(Object::Value(Value::List(List::of_single_value(entry))));
                 }
             }
@@ -431,6 +431,13 @@ impl Story {
                 self.evaluation_stack.push(Object::Value(value));
             },
         }
+        true
+    }
+
+    fn perform_native_function_call(&mut self, call: Rc<NativeFunctionCall>) -> bool {
+        let new_evaluation_stack = self.evaluation_stack.split_off(call.number_of_parameters());
+        let params = std::mem::replace(&mut self.evaluation_stack, new_evaluation_stack);
+        let result = call.call(params);
         true
     }
 

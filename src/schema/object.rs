@@ -266,6 +266,16 @@ impl TryInto<i64> for Object {
     }
 }
 
+impl TryInto<f64> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<f64, Self::Error> {
+        match self {
+            Self::Value(Value::Float(value)) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
 impl TryInto<String> for Object {
     type Error = ();
     fn try_into(self) -> Result<String, Self::Error> {
@@ -281,6 +291,16 @@ impl TryInto<List> for Object {
     fn try_into(self) -> Result<List, Self::Error> {
         match self {
             Self::Value(Value::List(value)) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryInto<Path> for Object {
+    type Error = ();
+    fn try_into(self) -> Result<Path, Self::Error> {
+        match self {
+            Self::Value(Value::DivertTarget(value)) => Ok(value),
             _ => Err(()),
         }
     }
