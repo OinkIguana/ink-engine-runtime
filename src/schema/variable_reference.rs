@@ -1,10 +1,7 @@
-#[derive(Clone, Debug)]
-pub struct VariableReference {
-    name: String,
-}
+use super::Path;
 
-impl VariableReference {
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
+#[derive(Clone, Debug)]
+pub enum VariableReference {
+    Variable(String),
+    PathForCount(Path),
 }

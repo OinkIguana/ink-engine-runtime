@@ -198,7 +198,7 @@ impl Story {
             Object::Divert(divert) => self.perform_divert(divert),
             Object::ControlCommand(command) => self.perform_control_command(command),
             Object::VariableAssignment(assignment) => self.perform_variable_assignment(assignment),
-            Object::VariableReference(reference) => false,
+            Object::VariableReference(reference) => self.perform_variable_reference(reference),
             Object::NativeFunctionCall(call) => false,
             _ => false,
         }
@@ -420,6 +420,20 @@ impl Story {
         true
     }
 
+    fn perform_variable_reference(&mut self, reference: Rc<VariableReference>) -> bool {
+        match &*reference {
+            VariableReference::PathForCount(path) => {
+                let count = self.visit_counts.get(path).cloned().unwrap_or(0);
+                self.evaluation_stack.push(Object::Value(Value::Int(count as i64)));
+            },
+            VariableReference::Variable(name) => {
+                let value = self.get_variable_value(name).expect(&format!("Variable reference failed to find variable named {}", name));
+                self.evaluation_stack.push(Object::Value(value));
+            },
+        }
+        true
+    }
+
     fn try_exit_function_evaluation_from_game(&mut self) -> bool {
         if self.current_element().push_pop_type == PushPopType::FunctionEvaluationFromGame {
             self.set_current_pointer(Pointer::NULL);
@@ -571,7 +585,7 @@ impl Story {
         match context {
             VariableContext::Unknown => self.get_temporary_variable(variable, VariableContext::Unknown),
             VariableContext::Temporary(context) => self.get_temporary_variable(variable, VariableContext::Temporary(context)),
-            VariableContext::Global => None
+            VariableContext::Global => None,
         }
     }
 
