@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::{ListDefinition, ListEntry};
+use super::{ListDefinition, ListEntry, List};
 
 #[derive(Clone, Debug)]
 pub struct ListDefinitions {
@@ -32,5 +32,13 @@ impl ListDefinitions {
     
     pub(crate) fn lookup_list_entry(&self, name: &String) -> Option<&ListEntry> {
         self.list_entry_lookup_cache.get(name)
+    }
+
+    pub(crate) fn all_from_origins<'a, I: IntoIterator<Item = &'a String>>(&self, origins: I) -> List {
+        origins.into_iter()
+            .filter_map(|origin| self.list_definition_by_name(origin))
+            .flat_map(|list| list.items.iter())
+            .cloned()
+            .collect()
     }
 }

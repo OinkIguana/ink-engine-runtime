@@ -1,8 +1,8 @@
-//use std::iter::IntoIterator;
+use std::iter::FromIterator;
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::ops::{BitAnd, BitOr, Sub};
 use std::collections::BTreeSet;
-use super::Value;
+use super::{Value, ListDefinitions};
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ListEntry {
@@ -26,7 +26,7 @@ impl PartialOrd for ListEntry {
 #[derive(Clone, Debug)]
 pub struct ListDefinition {
     pub(crate) name: String,
-    pub(crate) items: Vec<ListEntry>,
+    pub(crate) items: BTreeSet<ListEntry>,
 }
 
 impl ListDefinition {
@@ -48,6 +48,13 @@ impl List {
     pub(crate) fn of_single_value(value: ListEntry) -> Self {
         Self {
             origins: vec![value.origin.clone()].into_iter().collect(),
+            items: vec![value].into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn of_single_value_with_origins<'a, I: IntoIterator<Item = &'a String>>(value: ListEntry, origins: I) -> Self {
+        Self {
+            origins: origins.into_iter().cloned().collect(),
             items: vec![value].into_iter().collect(),
         }
     }
@@ -133,6 +140,41 @@ impl List {
         if self.is_empty() { return true }
         self.max().unwrap() <= other.max().unwrap() && self.min().unwrap() <= other.min().unwrap()
     }
+
+    pub fn increment(&self, distance: i64, lists: &ListDefinitions) -> Self {
+        Self {
+            origins: self.origins.clone(),
+            items: self.items
+                .iter()
+                .filter_map(|&ListEntry { ref origin, value, .. }| lists
+                    .list_definition_by_name(origin)?
+                    .item_with_value(value + distance)
+                )
+                .cloned()
+                .collect(),
+        }
+    }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        for item in &other.items {
+            if !self.items.contains(item) {
+                return false
+            }
+        }
+        true
+    }
+
+    pub fn invert(&self, lists: &ListDefinitions) -> List {
+        Self {
+            origins: self.origins.clone(),
+            items: &self.origins
+                .iter()
+                .filter_map(|name| lists.list_definition_by_name(name))
+                .flat_map(|list| list.items.iter())
+                .cloned()
+                .collect::<BTreeSet<_>>() - &self.items
+        }
+    }
 }
 
 impl Sub<&List> for List {
@@ -155,8 +197,28 @@ impl BitOr<&List> for List {
     }
 }
 
+impl BitAnd<&List> for List {
+    type Output = List;
+    fn bitand(self, other: &List) -> List {
+        Self {
+            origins: &self.origins & &other.origins,
+            items: &self.items & &other.items,
+        }
+    }
+}
+
 impl PartialEq for List {
     fn eq(&self, other: &Self) -> bool {
         self.items == other.items
     }
+}
+
+impl FromIterator<ListEntry> for List {
+    fn from_iter<I: IntoIterator<Item=ListEntry>>(iter: I) -> Self {
+        let items: BTreeSet<ListEntry> = iter.into_iter().collect();
+        List {
+            origins: items.iter().map(|item| item.origin.to_string()).collect(),
+            items,
+        }
+    } 
 }

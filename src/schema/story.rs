@@ -437,7 +437,13 @@ impl Story {
     fn perform_native_function_call(&mut self, call: Rc<NativeFunctionCall>) -> bool {
         let new_evaluation_stack = self.evaluation_stack.split_off(call.number_of_parameters());
         let params = std::mem::replace(&mut self.evaluation_stack, new_evaluation_stack);
-        let result = call.call(params);
+        let values = params
+            .into_iter()
+            .map(TryInto::try_into)
+            .map(|value| value.unwrap())
+            .collect();
+        let result = call.call(&self.list_definitions, values);
+        self.evaluation_stack.push(Object::Value(result));
         true
     }
 
