@@ -48,6 +48,26 @@ impl Thread {
             previous_pointer: Pointer::NULL,
         }
     }
+
+    fn current_element(&self) -> &Element {
+        self.elements.last().unwrap()
+    }
+
+    fn can_pop(&self, push_pop_type: Option<PushPopType>) -> bool {
+        if self.elements.len() <= 1 { return false }
+        match push_pop_type {
+            None => true,
+            Some(pop_type) => self.current_element().push_pop_type == pop_type,
+        }
+    }
+
+    fn pop(&mut self, push_pop_type: Option<PushPopType>) {
+        if self.can_pop(push_pop_type) {
+            self.elements.pop();
+        } else {
+            panic!("Mismatched push/pop in callstack");
+        }
+    }
 }
 
 /// This `Story` is comparable to the official `Story` class, but with the `StoryState`, `VariablesState`,
@@ -181,10 +201,59 @@ impl Story {
             pointer = Pointer::to_start_of_container(&container);
         }
 
-        let current_obj = pointer.resolve();
+        let mut current_obj = pointer.resolve();
         self.set_current_pointer(pointer);
 
-        let is_logic_or_flow_control = self.perform_logic_and_flow_control(current_obj);
+        let is_logic_or_flow_control = self.perform_logic_and_flow_control(current_obj.clone());
+        if self.current_pointer().is_null() { return; }
+
+        let mut should_add_to_stream = true;
+        if is_logic_or_flow_control {
+            should_add_to_stream = false;
+        }
+
+        if let Some(choice_point) = current_obj.as_ref().and_then(TryAsRef::<Rc<ChoicePoint>>::try_as_ref).cloned() {
+            if let Some(choice) = self.process_choice(choice_point) {
+                self.current_choices.push(Rc::new(choice));
+            }
+
+            current_obj = None;
+            should_add_to_stream = false;
+        }
+
+        if current_obj.as_ref().and_then(TryAsRef::<Rc<Container>>::try_as_ref).is_some() {
+            should_add_to_stream = false;
+        }
+
+        if should_add_to_stream {
+            if let Some(var_pointer) = current_obj.as_ref().and_then(TryAsRef::<VariablePointer>::try_as_ref).cloned() {
+                let var_pointer = match var_pointer.context {
+                    VariableContext::Unknown => {
+                        let context = self.context_for_variable_named(&var_pointer.name);
+                        VariablePointer {
+                            name: var_pointer.name.clone(),
+                            context,
+                        }
+                    }
+                    _ => var_pointer.clone(),
+                };
+
+                if self.current_element().in_expression_evaluation {
+                    self.evaluation_stack.push(Object::Value(Value::VariablePointer(var_pointer)));
+                } else {
+                    self.output_stream.push(Object::Value(Value::VariablePointer(var_pointer)));
+                }
+            }
+        }
+
+        self.next_content();
+
+        if let Some(Object::ControlCommand(ControlCommand::StartThread)) = current_obj {
+            let mut thread = self.current_thread().clone();
+            self.thread_counter += 1;
+            thread.index = self.thread_counter;
+            self.threads.push(thread);
+        }
     }
 
     /// Performs logic and flow control... returning true if the flow should be cancelled
@@ -286,7 +355,7 @@ impl Story {
                     panic!("Expected end of flow, but instead attempted to pop {}", pop_type);
                 }
 
-                self.pop_call_stack();
+                self.pop_call_stack(None);
             }
             ControlCommand::BeginString => {
                 assert!(!self.current_element().in_expression_evaluation, "Error processing control command: Must be in expression evaluation mode to begin a string");
@@ -447,6 +516,73 @@ impl Story {
         true
     }
 
+    fn process_choice(&mut self, choice_point: Rc<ChoicePoint>) -> Option<Choice> {
+        let mut show_choice = true;
+
+        if choice_point.has_condition {
+            let condition_value = self.evaluation_stack.pop().unwrap();
+            if !condition_value.is_truthy() {
+                show_choice = false;
+            }
+        }
+
+        let choice_only_text = if choice_point.has_choice_only_content {
+            self.evaluation_stack.pop().unwrap().try_into().unwrap()
+        } else { String::new() };
+
+        let start_text = if choice_point.has_start_content {
+            self.evaluation_stack.pop().unwrap().try_into().unwrap()
+        } else { String::new() };
+
+        if choice_point.once_only {
+            let visit_count = self.visit_counts.get(&choice_point.path_on_choice).cloned().unwrap_or(0);
+            if visit_count > 0 {
+                show_choice = false;
+            }
+        }
+
+        if !show_choice { return None } // NOTE: have to always evaluate everything, otherwise the values will be on the stacks
+
+        let choice = Choice::new(
+            (start_text + &choice_only_text).trim().to_string(),
+            choice_point.path_on_choice.clone(),
+            choice_point.is_invisible_default,
+        );
+
+        Some(choice)
+    }
+
+    fn next_content(&mut self) {
+        self.current_thread_mut().previous_pointer = self.current_pointer();
+        if let Some(pointer) = self.diverted_pointer.take() {
+            self.set_current_pointer(pointer);
+            self.visit_changed_containers_due_to_divert();
+            if !self.current_pointer().is_null() {
+                return;
+            }
+        }
+        let successful_pointer_increment = self.increment_content_pointer();
+        if !successful_pointer_increment {
+            let mut did_pop = false;
+            if self.current_thread().can_pop(Some(PushPopType::Function)) {
+                self.pop_call_stack(Some(PushPopType::Function));
+                if self.current_element().in_expression_evaluation {
+                    self.evaluation_stack.push(Object::Void);
+                }
+                did_pop = true;
+            } else if self.can_pop_thread() {
+                self.threads.pop();
+                did_pop = true;
+            } else {
+                self.try_exit_function_evaluation_from_game();
+            }
+
+            if did_pop && !self.current_pointer().is_null() {
+                self.next_content();
+            }
+        }
+    }
+
     fn try_exit_function_evaluation_from_game(&mut self) -> bool {
         if self.current_element().push_pop_type == PushPopType::FunctionEvaluationFromGame {
             self.set_current_pointer(Pointer::NULL);
@@ -475,6 +611,10 @@ impl Story {
         }
     }
 
+    fn visit_changed_containers_due_to_divert(&mut self) {
+        unimplemented!();
+    }
+
     fn pointer_to_path(&self, path: &Path, relative_to: Option<Object>)-> Option<Pointer> {
         if path.is_empty() { return None }
         if path.is_relative {
@@ -484,6 +624,38 @@ impl Story {
             }
         }
         self.main_container.content_at_path(path).as_ref().map(Pointer::to)
+    }
+
+    fn increment_content_pointer(&mut self) -> bool {
+        let mut successful_increment = false;
+        let mut pointer = self.current_pointer();
+        // NOTE: some reason we just assume everything is not null here...
+        pointer.increment_index();
+        loop {
+            let container: Rc<Container> = TryAsRef::<Rc<Container>>::try_as_ref(&pointer.container().unwrap()).unwrap().clone();
+            if pointer.index.unwrap() < container.content.len() { break }
+
+            successful_increment = false;
+
+            let next_ancestor_pointer = match &container.parent {
+                Some(pointer) => pointer.clone(),
+                None => break,
+            };
+
+            let next_ancestor: Rc<Container> = TryAsRef::<Rc<Container>>::try_as_ref(&next_ancestor_pointer.container().unwrap()).unwrap().clone();
+            let index_in_ancestor = match next_ancestor.content.iter().position(|obj| obj == &Object::Container(container.clone())) {
+                Some(index) => index,
+                None => break,
+            };
+
+            pointer = Pointer::new(&next_ancestor, index_in_ancestor + 1);
+            successful_increment = true;
+        }
+
+        if !successful_increment { pointer = Pointer::NULL; }
+        self.set_current_pointer(pointer);
+
+        successful_increment
     }
 
     fn trim_whitespace_from_function_end(&mut self) {
@@ -551,14 +723,16 @@ impl Story {
         self.current_element_mut().current_pointer = pointer;
     }
 
-    fn pop_call_stack(&mut self) {
+    fn pop_call_stack(&mut self, push_pop_type: Option<PushPopType>) {
         if self.current_element().push_pop_type == PushPopType::Function {
             self.trim_whitespace_from_function_end();
         }
-        self.current_thread_mut().elements.pop();
+        self.current_thread_mut().pop(push_pop_type);
     }
 
-    fn can_pop_thread(&self) -> bool { self.threads.len() > 1 && self.current_element().push_pop_type != PushPopType::FunctionEvaluationFromGame }
+    fn can_pop_thread(&self) -> bool {
+        self.threads.len() > 1 && self.current_element().push_pop_type != PushPopType::FunctionEvaluationFromGame
+    }
 }
 
 // Variables
@@ -571,7 +745,7 @@ impl Story {
         let raw_value = self.get_raw_variable_with_context(variable, context)?;
 
         match &raw_value {
-            Value::VariablePointer(name, context) => self.get_variable_with_context(name, *context),
+            Value::VariablePointer(VariablePointer { name, context }) => self.get_variable_with_context(name, *context),
             _ => Some(raw_value),
         }
     }
@@ -646,12 +820,12 @@ impl Story {
         if assignment.is_new_declaration {
             // creating a new variable pointer reference, we do this thing for some reason
             value = match value {
-                Object::Value(Value::VariablePointer(name, context)) => Object::Value(self.resolve_variable_pointer(name, context).into()),
+                Object::Value(Value::VariablePointer(VariablePointer { name, context })) => Object::Value(self.resolve_variable_pointer(name, context).into()),
                 _ => value,
             }
         } else {
             // assigning to existing variable... then do this thing!
-            while let Some(Value::VariablePointer(new_name, new_context)) = self.get_raw_variable_with_context(&name, context) {
+            while let Some(Value::VariablePointer(VariablePointer { name: new_name, context: new_context })) = self.get_raw_variable_with_context(&name, context) {
                 name = new_name;
                 context = new_context;
                 assign_global = context == VariableContext::Global;
@@ -665,15 +839,25 @@ impl Story {
         }
     }
 
-    fn resolve_variable_pointer(&self, name: String, context: VariableContext) -> (String, VariableContext) {
+    fn resolve_variable_pointer(&self, name: String, context: VariableContext) -> VariablePointer {
         let context = match context {
             VariableContext::Unknown => self.resolve_context_of_variable(&name),
             _ => context,
         };
         let value = self.get_raw_variable_with_context(&name, context);
         match value {
-            Some(Value::VariablePointer(name, context)) => (name, context),
-            _ => (name, context),
+            Some(Value::VariablePointer(var_pointer)) => var_pointer,
+            _ => VariablePointer { name, context },
+        }
+    }
+
+    // NOTE: These two functions sound very similar, and work very similar, but are two distinct
+    // functions in the original implementation... questionable, right?
+    fn context_for_variable_named(&self, name: &String) -> VariableContext {
+        if self.current_element().temporary_variables.get(name).is_some() {
+            VariableContext::Temporary(self.current_thread().elements.len())
+        } else {
+            VariableContext::Global
         }
     }
 

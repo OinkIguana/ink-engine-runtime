@@ -22,7 +22,7 @@ pub(crate) use object::NamedObject;
 pub use path::{Path, Component};
 pub use pointer::Pointer;
 pub use push_pop_type::PushPopType;
-pub use value::Value;
+pub use value::{Value, VariablePointer};
 pub use external_function::ExternalFunction;
 pub use variable_context::VariableContext;
 

@@ -2,6 +2,12 @@ use std::convert::TryInto;
 use super::{TryAsRef, VariableContext, List, Path};
 
 #[derive(Clone, PartialEq, Debug)]
+pub struct VariablePointer { 
+    pub(crate) name: String,
+    pub(crate) context: VariableContext,
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -9,7 +15,7 @@ pub enum Value {
     String(String),
 
     DivertTarget(Path),
-    VariablePointer(String, VariableContext),
+    VariablePointer(VariablePointer),
 }
 
 impl Value {
@@ -70,9 +76,9 @@ impl From<Path> for Value {
     }
 }
 
-impl From<(String, VariableContext)> for Value {
-    fn from((name, context): (String, VariableContext)) -> Self {
-        Self::VariablePointer(name, context)
+impl From<VariablePointer> for Value {
+    fn from(value: VariablePointer) -> Self {
+        Self::VariablePointer(value)
     }
 }
 
@@ -124,6 +130,16 @@ impl TryAsRef<Path> for Value {
     }
 }
 
+impl TryAsRef<VariablePointer> for Value {
+    fn try_as_ref(&self) -> Option<&VariablePointer> {
+        match self {
+            Value::VariablePointer(ref value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+
 impl TryInto<i64> for Value {
     type Error = ();
     fn try_into(self) -> Result<i64, Self::Error> {
@@ -169,3 +185,14 @@ impl TryInto<Path> for Value {
         }
     }
 }
+
+impl TryInto<VariablePointer> for Value {
+    type Error = ();
+    fn try_into(self) -> Result<VariablePointer, Self::Error> {
+        match self {
+            Value::VariablePointer(value) => Ok(value),
+            _ => Err(()),
+        }
+    }
+}
+

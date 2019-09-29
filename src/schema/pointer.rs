@@ -15,11 +15,15 @@ impl Default for Pointer {
 impl Pointer {
     pub(crate) const NULL: Pointer = Pointer { container: None, index: None };
 
-    pub(crate) fn to_start_of_container(container: &Rc<Container>) -> Self {
-        Self { 
-            container: Some(Rc::downgrade(container)), 
-            index: Some(0),
+    pub(crate) fn new(container: &Rc<Container>, index: usize) -> Self {
+        Pointer {
+            container: Some(Rc::downgrade(container)),
+            index: Some(index),
         }
+    }
+
+    pub(crate) fn to_start_of_container(container: &Rc<Container>) -> Self {
+        Self::new(container, 0)
     }
 
     pub(crate) fn to(object: &Object) -> Self {
@@ -48,5 +52,9 @@ impl Pointer {
 
     pub(crate) fn is_null(&self) -> bool {
         self.container.is_none() && self.index.is_none()
+    }
+
+    pub(crate) fn increment_index(&mut self) {
+        self.index = self.index.map(|i| i + 1);
     }
 }

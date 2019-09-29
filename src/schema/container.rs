@@ -3,7 +3,7 @@ use super::{Object, NamedObject, Path, Pointer, Component, TryAsRef};
 
 #[derive(Clone, Debug, Default)]
 pub struct Container {
-    name: String,
+    pub(crate) name: String,
 
     pub(crate) content: Vec<Object>,
     pub(crate) visits_should_be_counted: bool,
