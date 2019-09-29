@@ -35,11 +35,11 @@ impl Pointer {
         }
     }
 
-    pub(crate) fn container(&self) -> Option<Object> {
+    pub(crate) fn container(&self) -> Option<Rc<Container>> {
         self.container
             .as_ref()
             .and_then(Weak::upgrade)
-            .map(|c| Object::Container(c))
+            .map(|c| c)
     }
 
     pub(crate) fn resolve(&self) -> Option<Object> {

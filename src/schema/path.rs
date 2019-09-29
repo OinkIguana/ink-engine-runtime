@@ -32,6 +32,12 @@ impl Path {
     pub(crate) fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }
+
+    pub(crate) fn without_last_component(&self) -> Path {
+        let mut clone = self.clone();
+        clone.parts.pop();
+        clone
+    }
 }
 
 impl From<usize> for Component {

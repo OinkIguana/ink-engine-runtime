@@ -45,7 +45,7 @@ pub use control_command::ControlCommand;
 pub use divert::{Divert, DivertTarget};
 pub use glue::Glue;
 pub use native_function_call::NativeFunctionCall;
-pub use story::Story;
+pub use story::{Story, Thread, Element};
 pub use tag::Tag;
 pub use variable_assignment::VariableAssignment;
 pub use variable_reference::VariableReference;

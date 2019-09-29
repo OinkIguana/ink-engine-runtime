@@ -188,6 +188,16 @@ impl Story {
 
 // Story progression
 impl Story {
+    fn continue_single_step(&mut self) -> bool {
+        self.step();
+
+        if !self.can_continue() && self.current_element().push_pop_type != PushPopType::FunctionEvaluationFromGame {
+            self.try_follow_default_invisible_choice();
+        }
+
+        unimplemented!();
+    }
+
     fn step(&mut self) {
         let mut pointer = self.current_pointer();
         if pointer.is_null() { return; }
@@ -249,9 +259,7 @@ impl Story {
         self.next_content();
 
         if let Some(Object::ControlCommand(ControlCommand::StartThread)) = current_obj {
-            let mut thread = self.current_thread().clone();
-            self.thread_counter += 1;
-            thread.index = self.thread_counter;
+            let thread = self.fork_thread();
             self.threads.push(thread);
         }
     }
@@ -288,7 +296,7 @@ impl Story {
                     .expect(&format!("Attempted to divert to a variable target, but no variable was found named {}", variable));
 
                 match &value {
-                    Value::DivertTarget(path) => self.diverted_pointer = self.pointer_to_path(path, None),
+                    Value::DivertTarget(path) => self.diverted_pointer = self.pointer_at_path(path),
                     _ => panic!("Attempted to divert to a variable target, but variable {} contained a non-divert target value {:?}", variable, value),
                 }
             },
@@ -426,7 +434,7 @@ impl Story {
             }
             ControlCommand::VisitIndex => {
                 let pointer = self.current_pointer();
-                let object = pointer.container().unwrap();
+                let object = Object::Container(pointer.container().unwrap());
                 let path = object.path();
                 let visit_count = self.visit_counts
                     .get(&path)
@@ -547,6 +555,7 @@ impl Story {
             (start_text + &choice_only_text).trim().to_string(),
             choice_point.path_on_choice.clone(),
             choice_point.is_invisible_default,
+            self.fork_thread(),
         );
 
         Some(choice)
@@ -583,6 +592,35 @@ impl Story {
         }
     }
 
+    fn try_follow_default_invisible_choice(&mut self) -> bool {
+        let all_choices = &self.current_choices;
+        let mut invisible_choices = all_choices.iter().filter(|choice| choice.is_invisible_default).collect::<Vec<_>>();
+        // can only follow it automatically if it's the only choice
+        if invisible_choices.is_empty() || all_choices.len() > invisible_choices.len() {
+            return false;
+        }
+
+        let choice = invisible_choices.pop().unwrap().clone();
+        self.set_current_thread(choice.thread_at_generation.clone());
+        self.choose_path(&choice.target_path, false);
+        return true;
+    }
+
+    fn choose_path(&mut self, path: &Path, incrementing_turn_index: bool) {
+        self.set_chosen_path(path, incrementing_turn_index);
+        self.visit_changed_containers_due_to_divert();
+    }
+
+    fn set_chosen_path(&mut self, path: &Path, incrementing_turn_index: bool) {
+        self.current_choices.clear();
+
+        let new_pointer = self.pointer_at_path(path).unwrap();
+        self.set_current_pointer(new_pointer);
+        if incrementing_turn_index {
+            self.current_turn_index += 1;
+        }
+    }
+
     fn try_exit_function_evaluation_from_game(&mut self) -> bool {
         if self.current_element().push_pop_type == PushPopType::FunctionEvaluationFromGame {
             self.set_current_pointer(Pointer::NULL);
@@ -612,7 +650,76 @@ impl Story {
     }
 
     fn visit_changed_containers_due_to_divert(&mut self) {
-        unimplemented!();
+        let previous_pointer = &self.current_thread().previous_pointer;
+        let current_pointer = self.current_pointer();
+
+        if current_pointer.index.is_none() { return }
+
+        let mut prev_containers = vec![];
+        if !previous_pointer.is_null() {
+            let mut prev_ancestor = previous_pointer.resolve()
+                .as_ref()
+                .and_then(TryAsRef::<Rc<Container>>::try_as_ref)
+                .cloned()
+                .or_else(|| previous_pointer.container());
+            while let Some(ancestor) = prev_ancestor {
+                prev_ancestor = ancestor.parent
+                    .as_ref()
+                    .and_then(Pointer::resolve)
+                    .as_ref()
+                    .and_then(TryAsRef::<Rc<Container>>::try_as_ref)
+                    .cloned();
+                prev_containers.push(ancestor);
+            }
+        }
+
+        let mut current_child_of_container = match current_pointer.resolve() {
+            Some(child) => child,
+            None => return,
+        };
+
+        let mut current_container = current_pointer.container();
+        while let Some(container) = current_container {
+            if prev_containers.iter().any(|prev| Rc::ptr_eq(prev, &container)) || container.counting_at_start_only {
+                break;
+            }
+            let entering_at_start = !container.content.is_empty()
+                && &current_child_of_container == container.content.first().unwrap();
+            self.visit_container(&container, entering_at_start);
+            current_container = container.parent
+                .as_ref()
+                .and_then(Pointer::resolve)
+                .as_ref()
+                .and_then(TryAsRef::<Rc<Container>>::try_as_ref)
+                .cloned();
+            current_child_of_container = Object::Container(container);
+        }
+    }
+
+    // another sketchy pair of very similarly named functions... but this one seems to do something
+    // different
+    fn pointer_at_path(&self, path: &Path) -> Option<Pointer> {
+        if path.is_empty() { return None }
+
+        match path.parts.last().unwrap() {
+            Component::Index(i) => {
+                let part_path = path.without_last_component();
+                let container: Rc<Container> = self.main_container
+                    .content_at_path(&part_path)
+                    .as_ref()
+                    .and_then(TryAsRef::<Rc<Container>>::try_as_ref)
+                    .cloned()?;
+                Some(Pointer::new(&container, *i))
+            },
+            _ => {
+                let container = self.main_container
+                    .content_at_path(path)
+                    .as_ref()
+                    .and_then(TryAsRef::<Rc<Container>>::try_as_ref)
+                    .cloned()?;
+                Some(Pointer::to_start_of_container(&container))
+            },
+        }
     }
 
     fn pointer_to_path(&self, path: &Path, relative_to: Option<Object>)-> Option<Pointer> {
@@ -632,7 +739,7 @@ impl Story {
         // NOTE: some reason we just assume everything is not null here...
         pointer.increment_index();
         loop {
-            let container: Rc<Container> = TryAsRef::<Rc<Container>>::try_as_ref(&pointer.container().unwrap()).unwrap().clone();
+            let container: Rc<Container> = pointer.container().unwrap();
             if pointer.index.unwrap() < container.content.len() { break }
 
             successful_increment = false;
@@ -642,7 +749,7 @@ impl Story {
                 None => break,
             };
 
-            let next_ancestor: Rc<Container> = TryAsRef::<Rc<Container>>::try_as_ref(&next_ancestor_pointer.container().unwrap()).unwrap().clone();
+            let next_ancestor: Rc<Container> = next_ancestor_pointer.container().unwrap();
             let index_in_ancestor = match next_ancestor.content.iter().position(|obj| obj == &Object::Container(container.clone())) {
                 Some(index) => index,
                 None => break,
@@ -685,7 +792,7 @@ impl Story {
         let loop_index = (seq_count / num_elements) as u64;
         let iteration_index = seq_count % num_elements;
 
-        let path_str = format!("{}", seq_container.path());
+        let path_str = format!("{}", Object::Container(seq_container).path());
         let hash = path_str.chars().fold(0, |acc, ch| acc + ch as u64);
         let seed = hash + loop_index + self.story_seed;
         let mut random = Pcg64::seed_from_u64(seed);
@@ -701,6 +808,11 @@ impl Story {
 impl Story {
     fn current_thread(&self) -> &Thread {
         self.threads.last().unwrap()
+    }
+
+    fn set_current_thread(&mut self, thread: Thread) {
+        assert!(self.threads.len() == 1);
+        self.threads = vec![thread];
     }
 
     fn current_thread_mut(&mut self) -> &mut Thread {
@@ -732,6 +844,13 @@ impl Story {
 
     fn can_pop_thread(&self) -> bool {
         self.threads.len() > 1 && self.current_element().push_pop_type != PushPopType::FunctionEvaluationFromGame
+    }
+
+    fn fork_thread(&mut self) -> Thread {
+        let mut thread = self.current_thread().clone();
+        self.thread_counter += 1;
+        thread.index = self.thread_counter;
+        return thread;
     }
 }
 
